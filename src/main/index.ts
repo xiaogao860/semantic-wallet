@@ -128,6 +128,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  // 开发模式下 Dock 也显示应用图标（打包后由安装包自带图标）
+  if (isMac && !app.isPackaged) app.dock?.setIcon(join(__dirname, '../../build/icon.png'))
   loadSettings()
   loadRpcState()
   await configureProxy()
