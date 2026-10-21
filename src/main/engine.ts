@@ -362,7 +362,7 @@ export async function chat(text: string): Promise<ChatResponse> {
       recent
     })
   } catch (e) {
-    return { reply: '', cards: [info('danger', describeLlmError(e))] }
+    return { reply: '', cards: [info('danger', describeLlmError(e, settings().llm.baseURL))] }
   }
   recent.push({ user: text, reply: parsed.clarify ?? parsed.reply })
   if (recent.length > 8) recent.shift()

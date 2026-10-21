@@ -3,6 +3,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import type { LlmProtocol } from '../../shared/types'
+import { proxyStatus } from '../proxy'
 
 export interface LlmConfig {
   protocol: LlmProtocol
@@ -91,11 +92,17 @@ export async function testLlm(cfg: LlmConfig): Promise<{ ok: boolean; detail: st
     const ok = /"ok"\s*:\s*true/.test(out)
     return { ok, detail: ok ? `连接成功，响应 ${Date.now() - t0}ms` : `模型返回了意外内容：${out.slice(0, 80)}` }
   } catch (e) {
-    return { ok: false, detail: describeLlmError(e) }
+    return { ok: false, detail: describeLlmError(e, cfg.baseURL) }
   }
 }
 
-export function describeLlmError(e: unknown): string {
+const NEEDS_PROXY = ['api.anthropic.com', 'api.openai.com']
+
+export function describeLlmError(e: unknown, baseURL?: string): string {
+  const blocked = baseURL && NEEDS_PROXY.includes(host(baseURL)) && !proxyStatus()
+  if (blocked && (e instanceof Anthropic.APIConnectionError || e instanceof OpenAI.APIConnectionError)) {
+    return '连不上模型接口：Claude / OpenAI 官方接口在国内需要开代理。当前没有检测到可用代理，可以打开代理，或换成 DeepSeek'
+  }
   if (e instanceof Anthropic.AuthenticationError || e instanceof OpenAI.AuthenticationError) return 'API Key 无效'
   if (e instanceof Anthropic.NotFoundError || e instanceof OpenAI.NotFoundError) return '接口地址或模型名不存在'
   if (e instanceof Anthropic.RateLimitError || e instanceof OpenAI.RateLimitError) return '请求太频繁，稍后再试'

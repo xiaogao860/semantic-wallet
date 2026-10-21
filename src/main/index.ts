@@ -7,7 +7,7 @@ import { cancelRoute, confirmRoute, routeStatus } from './routes'
 import { cancel, chat, confirm, contacts, defaultBalances, removeContact, saveContact, txStatus } from './engine'
 import { describeLlmError, listModels, testLlm } from './intent/llm'
 import * as keystore from './keystore'
-import { cachedState, loadRpcState, probe } from './rpc'
+import { cachedState, invalidateRpcState, loadRpcState, probe } from './rpc'
 import { configureProxy } from './proxy'
 import { loadSettings, resolveLlm, setLlm, setPrefs, settings, view } from './settings'
 
@@ -147,7 +147,7 @@ app.whenReady().then(async () => {
   if (isMac && !app.isPackaged) app.dock?.setIcon(join(__dirname, '../../build/icon.png'))
   loadSettings()
   loadRpcState()
-  await configureProxy()
+  await configureProxy(invalidateRpcState)
   await loadRegistry()
   for (const [channel, fn] of Object.entries(handlers)) {
     ipcMain.handle(channel, async (_e, ...args) => {

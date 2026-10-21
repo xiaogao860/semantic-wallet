@@ -127,6 +127,12 @@ function shortError(e: unknown): string {
   return msg.slice(0, 60)
 }
 
+// 代理开关后网络路径变了：丢掉旧的测速结果，下次使用时重新探测
+export function invalidateRpcState(): void {
+  states = {}
+  writeJson(STATE_FILE, states)
+}
+
 export function cachedState(networkId: string): NetworkRpcState | undefined {
   return states[networkId]
 }
