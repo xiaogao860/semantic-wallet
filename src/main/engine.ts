@@ -324,6 +324,9 @@ export async function execute(intent: Intent): Promise<Card[]> {
     case 'add_contact': return [doAddContact(intent)]
     case 'show_address': return [doShowAddress(intent)]
     case 'history': return [doHistory()]
+    // 网站连接由界面里的 WalletConnect 执行
+    case 'dapp_list': return [{ kind: 'dapp_command', op: 'list', target: null }]
+    case 'dapp_disconnect': return [{ kind: 'dapp_command', op: 'disconnect', target: intent.name }]
   }
 }
 

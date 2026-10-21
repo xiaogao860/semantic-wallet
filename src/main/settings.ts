@@ -8,6 +8,7 @@ const FILE = 'settings.json'
 
 interface StoredSettings {
   uiMode: UiMode
+  wcProjectId: string // WalletConnect（Reown）项目 ID
   llm: { protocol: LlmProtocol; baseURL: string; model: string; apiKeyEnc?: string }
   apiKeys: Record<string, string> // 接口域名 → 加密后的 key
   defaultNetwork: string
@@ -17,6 +18,7 @@ interface StoredSettings {
 
 const DEFAULTS: StoredSettings = {
   uiMode: 'compact',
+  wcProjectId: '',
   // 测试默认走 DeepSeek V4.1 Flash 的 Anthropic 兼容接口
   llm: { protocol: 'anthropic', baseURL: 'https://api.deepseek.com/anthropic', model: 'deepseek-flash' },
   apiKeys: {},
@@ -50,6 +52,7 @@ export function view(): AppSettingsView {
   const { protocol, baseURL, model } = current.llm
   return {
     uiMode: current.uiMode,
+    wcProjectId: current.wcProjectId,
     llm: { protocol, baseURL, model, hasKey: !!current.apiKeys[hostOf(baseURL)] || !!envKey(protocol) },
     savedKeyHosts: Object.keys(current.apiKeys),
     defaultNetwork: current.defaultNetwork,
@@ -102,7 +105,7 @@ export async function setLlm(input: LlmSettingsInput): Promise<void> {
   writeJson(FILE, current)
 }
 
-export function setPrefs(p: Partial<Pick<StoredSettings, 'uiMode' | 'defaultNetwork' | 'allowMainnet' | 'stableLimit'>>): void {
+export function setPrefs(p: Partial<Pick<StoredSettings, 'uiMode' | 'wcProjectId' | 'defaultNetwork' | 'allowMainnet' | 'stableLimit'>>): void {
   current = { ...current, ...p }
   writeJson(FILE, current)
 }

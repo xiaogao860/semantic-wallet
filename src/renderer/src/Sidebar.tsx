@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AppSettingsView, WalletStatus } from '../../shared/types'
 import { type FeaturedNetwork, api } from './api'
+import { DappPanel } from './DappCards'
 import Settings from './Settings'
 
 function short(a: string): string {
@@ -86,6 +87,11 @@ export default function Sidebar({ status, onLock, onCompact }: { status: WalletS
             </div>
           )
         })}
+      </section>
+
+      <section>
+        <h3>连接网站</h3>
+        <DappPanel />
       </section>
 
       <section>

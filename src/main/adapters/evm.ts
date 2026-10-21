@@ -55,7 +55,7 @@ export async function publicClient(n: Network): Promise<PublicClient> {
   return client
 }
 
-async function feeParams(c: PublicClient): Promise<{ perGas: bigint; params: Record<string, bigint> }> {
+export async function feeParams(c: PublicClient): Promise<{ perGas: bigint; params: Record<string, bigint> }> {
   try {
     const f = await c.estimateFeesPerGas()
     if (f.maxFeePerGas) {
@@ -83,6 +83,19 @@ export function shortErr(e: unknown): string {
   // viem 的 shortMessage 常是笼统的 "Transaction creation failed."，节点给的 details 才说明原因
   const detail = any.details && !head.includes(any.details) ? `（${any.details}）` : ''
   return `${head}${detail}`.slice(0, 200)
+}
+
+// 网站发来的任意交易：按我们自己的手续费估算发送
+export async function sendCall(
+  n: Network,
+  privateKey: `0x${string}`,
+  call: { to?: `0x${string}`; data?: `0x${string}`; value: bigint },
+  gas: bigint
+): Promise<`0x${string}`> {
+  const { urls, transport } = await transportFor(n)
+  const wallet = createWalletClient({ account: privateKeyToAccount(privateKey), chain: chainOf(n, urls), transport })
+  const { params } = await feeParams(await publicClient(n))
+  return wallet.sendTransaction({ ...call, gas, ...params } as Parameters<typeof wallet.sendTransaction>[0])
 }
 
 export async function resolveEns(name: string): Promise<string | null> {

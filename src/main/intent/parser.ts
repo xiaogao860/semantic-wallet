@@ -3,7 +3,7 @@
 import { z } from 'zod'
 import { type LlmConfig, completeJson } from './llm'
 
-export const ACTIONS = ['transfer', 'balance', 'use_network', 'add_rpc', 'add_contact', 'show_address', 'history'] as const
+export const ACTIONS = ['transfer', 'balance', 'use_network', 'add_rpc', 'add_contact', 'show_address', 'history', 'dapp_list', 'dapp_disconnect'] as const
 
 const nullableString = { anyOf: [{ type: 'string' }, { type: 'null' }] }
 
@@ -67,6 +67,8 @@ const SYSTEM = `你是一个多链加密钱包的意图解析器。你的唯一�
 - add_contact：保存联系人，name=名字，recipient=地址，network 可选（用于判断地址所属链）
 - show_address：显示我的收款地址，network 可选
 - history：查看最近的转账记录
+- dapp_list：查看已连接的网站（DApp）
+- dapp_disconnect：断开网站连接，name=网站名（如 "Uniswap"），断开全部时 name 为 null
 
 规则：
 1. 只输出一个 JSON 对象，格式：{"intents":[...],"clarify":null,"reply":"..."}。每个 intent 必须包含全部 7 个字段：action, network, asset, amount, recipient, name, url，没有的填 null。

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Card } from '../../shared/types'
 import { api } from './api'
 import CardView from './Cards'
+import { WC_URI, wc } from './walletconnect'
 
 type Msg = { role: 'user'; text: string } | { role: 'assistant'; text: string; cards: Card[] }
 
@@ -26,15 +27,57 @@ export default function Chat({ compact = false, onSettled }: { compact?: boolean
     bottom.current?.scrollIntoView({ behavior: 'smooth' })
   }, [msgs, busy])
 
+  // 网站发来的连接 / 签名请求插入对话
+  useEffect(() => wc.onCard((card) => setMsgs((m) => [...m, { role: 'assistant', text: '', cards: [card] }])), [])
+
+  // 对话里的"连了哪些网站 / 断开网站"交给 WalletConnect 执行
+  const runDappCommands = async (cards: Card[]): Promise<Card[]> => {
+    const out: Card[] = []
+    for (const c of cards) {
+      if (c.kind !== 'dapp_command') {
+        out.push(c)
+        continue
+      }
+      try {
+        if (c.op === 'list') {
+          const list = wc.sessions()
+          out.push({ kind: 'info', level: 'info', text: list.length ? `已连接：\n${list.map((s) => `${s.dapp.name}（${s.dapp.url}）`).join('\n')}` : '还没有连接任何网站' })
+        } else {
+          const names = await wc.disconnectMatching(c.target)
+          out.push({ kind: 'info', level: names.length ? 'ok' : 'info', text: names.length ? `已断开：${names.join('、')}` : '没有找到要断开的网站' })
+        }
+      } catch (e) {
+        out.push({ kind: 'info', level: 'danger', text: (e as Error).message })
+      }
+    }
+    return out
+  }
+
   const send = async (text: string) => {
     const t = text.trim()
     if (!t || busy) return
     setInput('')
+    // WalletConnect 连接码里有配对密钥，不发给大模型，直接本地配对
+    const uri = WC_URI.exec(t)
+    if (uri) {
+      setMsgs((m) => [
+        ...m,
+        { role: 'user', text: `${uri[0].slice(0, 24)}…` },
+        { role: 'assistant', text: '正在连接网站，网站信息到了会在这里请你确认…', cards: [] }
+      ])
+      try {
+        await wc.pair(uri[0])
+      } catch (e) {
+        setMsgs((m) => [...m, { role: 'assistant', text: '', cards: [{ kind: 'info', level: 'danger', text: (e as Error).message }] }])
+      }
+      return
+    }
     setMsgs((m) => [...m, { role: 'user', text: t }])
     setBusy(true)
     try {
       const r = await api.chat(t)
-      setMsgs((m) => [...m, { role: 'assistant', text: r.reply, cards: r.cards }])
+      const cards = await runDappCommands(r.cards)
+      setMsgs((m) => [...m, { role: 'assistant', text: r.reply, cards }])
       onSettled?.()
     } catch (e) {
       setMsgs((m) => [...m, { role: 'assistant', text: '', cards: [{ kind: 'info', level: 'danger', text: (e as Error).message }] }])

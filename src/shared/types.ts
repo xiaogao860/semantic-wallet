@@ -69,7 +69,72 @@ export interface InfoCard {
   text: string
 }
 
-export type Card = TransferCard | BalanceCard | NetworkCard | InfoCard
+// ---------- 连接网站（WalletConnect） ----------
+
+export interface DappInfo {
+  name: string
+  url: string
+  icon?: string
+}
+
+export interface DappField {
+  label: string
+  value: string
+  mono?: boolean
+}
+
+// 网站发来的请求（签名 / 交易），由主进程解码后生成
+export interface DappRequestCard {
+  kind: 'dapp_request'
+  id: string
+  wcId: number
+  topic: string
+  dapp: DappInfo
+  method: string
+  title: string
+  network?: NetworkSummary
+  fields: DappField[]
+  checks: RiskCheck[]
+  simulation?: { ok: boolean; detail: string }
+  aiSummary?: string
+  status: 'ready' | 'blocked' | 'sending' | 'done' | 'rejected' | 'failed' | 'expired'
+  result?: string
+  explorerUrl?: string
+  error?: string
+}
+
+// 网站请求连接
+export interface DappProposalCard {
+  kind: 'dapp_proposal'
+  id: number
+  dapp: DappInfo
+  networks: string[]
+  unsupported: string[]
+  verified: 'VALID' | 'INVALID' | 'UNKNOWN'
+  isScam?: boolean
+  status: 'ready' | 'approved' | 'rejected' | 'failed' | 'expired'
+  error?: string
+}
+
+// 对话里说"断开所有网站""连了哪些网站"，交给界面里的 WalletConnect 执行
+export interface DappCommandCard {
+  kind: 'dapp_command'
+  op: 'list' | 'disconnect'
+  target: string | null
+}
+
+export interface DappRequestInput {
+  wcId: number
+  topic: string
+  chainId: string // CAIP-2，如 eip155:8453
+  method: string
+  params: unknown
+  dapp: DappInfo
+  verified?: 'VALID' | 'INVALID' | 'UNKNOWN'
+  isScam?: boolean
+}
+
+export type Card = TransferCard | BalanceCard | NetworkCard | InfoCard | DappRequestCard | DappProposalCard | DappCommandCard
 
 export interface ChatResponse {
   reply: string
@@ -96,6 +161,7 @@ export type UiMode = 'compact' | 'full'
 
 export interface AppSettingsView {
   uiMode: UiMode
+  wcProjectId: string
   llm: LlmSettingsView
   savedKeyHosts: string[] // 已保存 key 的接口域名
   defaultNetwork: string

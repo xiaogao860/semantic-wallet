@@ -5,6 +5,7 @@ import Chat from './Chat'
 import Compact from './Compact'
 import Onboarding from './Onboarding'
 import Sidebar from './Sidebar'
+import { wc } from './walletconnect'
 
 export default function App() {
   const [status, setStatus] = useState<WalletStatus | null>(null)
@@ -12,14 +13,26 @@ export default function App() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [mode, setMode] = useState<UiMode | null>(null)
+  const [projectId, setProjectId] = useState('')
 
   useEffect(() => {
-    void api.settings().then((s) => setMode(s.uiMode))
+    void api.settings().then((s) => {
+      setMode(s.uiMode)
+      setProjectId(s.wcProjectId)
+    })
     void api.status().then(setStatus)
-    // 主进程闲置自动锁定后，界面跟着回到解锁页
-    const t = setInterval(() => void api.status().then(setStatus), 15_000)
+    // 主进程闲置自动锁定后，界面跟着回到解锁页；设置里改了项目 ID 也跟着生效
+    const t = setInterval(() => {
+      void api.status().then(setStatus)
+      void api.settings().then((s) => setProjectId(s.wcProjectId))
+    }, 5_000)
     return () => clearInterval(t)
   }, [])
+
+  const evm = status?.addresses?.evm
+  useEffect(() => {
+    if (evm && projectId) void wc.init(projectId, evm)
+  }, [evm, projectId])
 
   if (!status || !mode) return <div className="center muted">加载中…</div>
   const switchMode = (m: UiMode) => void api.setMode(m).then((s) => setMode(s.uiMode))

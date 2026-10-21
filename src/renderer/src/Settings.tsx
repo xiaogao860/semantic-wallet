@@ -277,6 +277,19 @@ export default function Settings({ initial, networks, onClose }: { initial: AppS
           </div>
         )}
 
+        <h2>连接网站</h2>
+        <label>
+          WalletConnect 项目 ID
+          <input
+            defaultValue={view.wcProjectId}
+            placeholder="在 cloud.reown.com 免费创建项目后获得"
+            onBlur={(e) => void savePref({ wcProjectId: e.target.value.trim() })}
+          />
+        </label>
+        <a href="https://cloud.reown.com" target="_blank" rel="noreferrer" className="small">
+          获取项目 ID →
+        </a>
+
         <h2>安全</h2>
         <label>
           默认网络

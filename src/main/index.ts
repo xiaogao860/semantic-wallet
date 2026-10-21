@@ -1,7 +1,8 @@
 import { BrowserWindow, app, ipcMain, nativeTheme, shell } from 'electron'
 import { join } from 'node:path'
-import type { ChainFamily, Contact, LlmConnectResult, LlmSettingsInput, UiMode, WalletStatus } from '../shared/types'
+import type { ChainFamily, Contact, DappRequestInput, LlmConnectResult, LlmSettingsInput, UiMode, WalletStatus } from '../shared/types'
 import { allNetworks, getNetwork, loadRegistry, summary } from './chains/registry'
+import * as dapp from './dapp'
 import { cancel, chat, confirm, contacts, defaultBalances, removeContact, saveContact, txStatus } from './engine'
 import { describeLlmError, listModels, testLlm } from './intent/llm'
 import * as keystore from './keystore'
@@ -29,8 +30,9 @@ function applyMode(win: BrowserWindow, mode: UiMode): void {
 }
 
 // 开发模式与打包后的应用共用同一个数据目录和钥匙串条目，打包后能直接读到原来的钱包和 API Key
+// SEMANTIC_WALLET_DATA 可指定别的目录（测试或多钱包），不碰默认目录里的真实钱包
 app.setName('semantic-wallet')
-app.setPath('userData', join(app.getPath('appData'), 'semantic-wallet'))
+app.setPath('userData', process.env.SEMANTIC_WALLET_DATA || join(app.getPath('appData'), 'semantic-wallet'))
 
 function status(): WalletStatus {
   return { exists: keystore.vaultExists(), unlocked: keystore.isUnlocked(), addresses: keystore.addresses() }
@@ -58,6 +60,11 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'tx:cancel': (id: string) => cancel(id),
   'tx:status': (id: string) => txStatus(id),
 
+  'dapp:chains': (caips: string[]) => dapp.chainsInfo(caips),
+  'dapp:analyze': (input: DappRequestInput) => dapp.analyze(input),
+  'dapp:execute': (id: string) => dapp.execute(id),
+  'dapp:reject': (id: string) => dapp.reject(id),
+
   'settings:get': () => view(),
   // 先用候选配置测通，再保存；测不通就不覆盖原来的配置
   'llm:connect': async (input: LlmSettingsInput): Promise<LlmConnectResult> => {
@@ -79,7 +86,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
     return view()
   },
   'balances:default': () => defaultBalances(),
-  'settings:setPrefs': (p: { defaultNetwork?: string; allowMainnet?: boolean; stableLimit?: number }) => {
+  'settings:setPrefs': (p: { defaultNetwork?: string; allowMainnet?: boolean; stableLimit?: number; wcProjectId?: string }) => {
     if (p.defaultNetwork) getNetwork(p.defaultNetwork)
     setPrefs(p)
     return view()

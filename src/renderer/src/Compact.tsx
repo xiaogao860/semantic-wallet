@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppSettingsView, BalanceCard, WalletStatus } from '../../shared/types'
 import { type FeaturedNetwork, api } from './api'
 import Chat from './Chat'
+import { DappPanel } from './DappCards'
 import Settings from './Settings'
+import { wc } from './walletconnect'
 
 function short(a: string): string {
   return `${a.slice(0, 5)}…${a.slice(-4)}`
@@ -16,6 +18,8 @@ export default function Compact({ status, onLock, onExpand }: { status: WalletSt
   const [copied, setCopied] = useState(false)
   const [menu, setMenu] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showDapps, setShowDapps] = useState(false)
+  const [dappCount, setDappCount] = useState(wc.sessions().length)
   const menuRef = useRef<HTMLDivElement>(null)
 
   const network = nets.find((n) => n.id === settings?.defaultNetwork)
@@ -52,6 +56,8 @@ export default function Compact({ status, onLock, onExpand }: { status: WalletSt
     return () => clearInterval(t)
   }, [settings?.defaultNetwork, loadBalances])
 
+  useEffect(() => wc.onChange(() => setDappCount(wc.sessions().length)), [])
+
   useEffect(() => {
     if (!menu) return
     const close = (e: MouseEvent) => {
@@ -80,6 +86,9 @@ export default function Compact({ status, onLock, onExpand }: { status: WalletSt
             </option>
           ))}
         </select>
+        <button className={`c-icon c-link ${dappCount ? 'on' : ''}`} onClick={() => setShowDapps(true)} title="连接网站">
+          ⛓{dappCount > 0 && <span className="c-badge">{dappCount}</span>}
+        </button>
         <div className="c-menu" ref={menuRef}>
           <button className="c-icon" onClick={() => setMenu(!menu)} title="菜单">
             ⋯
@@ -140,6 +149,20 @@ export default function Compact({ status, onLock, onExpand }: { status: WalletSt
       </section>
 
       <Chat compact onSettled={() => void loadBalances()} />
+
+      {showDapps && (
+        <div className="modal-bg" onClick={() => setShowDapps(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>连接网站</h2>
+            <DappPanel compact />
+            <div className="row">
+              <button className="primary" onClick={() => setShowDapps(false)}>
+                完成
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSettings && settings && (
         <Settings

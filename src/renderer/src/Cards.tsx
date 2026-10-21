@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { BalanceCard, Card, NetworkCard, TransferCard } from '../../shared/types'
 import { api } from './api'
+import { ProposalCard, RequestCard } from './DappCards'
 
 const LEVEL_ICON = { ok: '✓', info: 'i', warn: '!', danger: '✕' }
 
@@ -162,6 +163,12 @@ export default function CardView({ card, onSettled }: { card: Card; onSettled?: 
       return <Balances card={card} />
     case 'network':
       return <Network card={card} />
+    case 'dapp_proposal':
+      return <ProposalCard card={card} />
+    case 'dapp_request':
+      return <RequestCard card={card} />
+    case 'dapp_command':
+      return null
     case 'info':
       return (
         <div className={`card info ${card.level}`}>

@@ -15,10 +15,13 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.137.0",
+    "@reown/walletkit": "^1.6.0",
     "@scure/bip32": "^2.4.0",
     "@scure/bip39": "^2.4.0",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
+    "@walletconnect/core": "^2.26.0",
+    "@walletconnect/utils": "^2.26.0",
     "openai": "^7.39.0",
     "tronweb": "^6.5.1",
     "undici": "^7.30.1",
@@ -43,7 +46,9 @@
     "esbuild@0.28.2": true,
     "bigint-buffer": false,
     "bufferutil": false,
-    "utf-8-validate": false
+    "utf-8-validate": false,
+    "electron-winstaller": false,
+    "fsevents": false
   },
   "author": "xiaogao860",
   "build": {

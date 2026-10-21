@@ -3,6 +3,8 @@ import type {
   BalanceCard,
   ChatResponse,
   Contact,
+  DappRequestCard,
+  DappRequestInput,
   LlmConnectResult,
   LlmSettingsInput,
   NetworkRpcState,
@@ -39,11 +41,16 @@ export const api = {
   defaultBalances: () => c<BalanceCard>('balances:default'),
   connectLlm: (input: LlmSettingsInput) => c<LlmConnectResult>('llm:connect', input),
   listModels: (input: LlmSettingsInput) => c<{ models: string[]; error?: string }>('llm:models', input),
-  setPrefs: (p: Partial<Pick<AppSettingsView, 'defaultNetwork' | 'allowMainnet' | 'stableLimit'>>) => c<AppSettingsView>('settings:setPrefs', p),
+  setPrefs: (p: Partial<Pick<AppSettingsView, 'defaultNetwork' | 'allowMainnet' | 'stableLimit' | 'wcProjectId'>>) => c<AppSettingsView>('settings:setPrefs', p),
 
   featured: () => c<FeaturedNetwork[]>('networks:featured'),
   networkCount: () => c<number>('networks:count'),
   probe: (id: string) => c<NetworkRpcState>('networks:probe', id),
 
-  contacts: () => c<Contact[]>('contacts:list')
+  contacts: () => c<Contact[]>('contacts:list'),
+
+  dappChains: (caips: string[]) => c<{ supported: { caip: string; name: string }[]; unsupported: string[] }>('dapp:chains', caips),
+  dappAnalyze: (input: DappRequestInput) => c<DappRequestCard>('dapp:analyze', input),
+  dappExecute: (id: string) => c<{ result: string; explorerUrl?: string }>('dapp:execute', id),
+  dappReject: (id: string) => c<void>('dapp:reject', id)
 }
