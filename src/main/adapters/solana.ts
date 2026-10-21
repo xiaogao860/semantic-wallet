@@ -29,6 +29,7 @@ function conn(url: string): Connection {
 }
 
 const on = <T>(n: Network, fn: (c: Connection) => Promise<T>) => withRpc(n.id, (url) => fn(conn(url)))
+export const onSolana = on
 
 async function tokenProgram(c: Connection, mint: PublicKey): Promise<PublicKey> {
   const info = await c.getAccountInfo(mint)

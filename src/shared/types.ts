@@ -134,7 +134,30 @@ export interface DappRequestInput {
   isScam?: boolean
 }
 
-export type Card = TransferCard | BalanceCard | NetworkCard | InfoCard | DappRequestCard | DappProposalCard | DappCommandCard
+// 兑换 / 跨链
+export interface RouteCard {
+  kind: 'route'
+  id: string
+  mode: 'swap' | 'bridge'
+  status: 'ready' | 'blocked' | 'sending' | 'sent' | 'confirmed' | 'failed' | 'cancelled' | 'expired'
+  provider: string
+  from: { network: NetworkSummary; asset: string; amount: string }
+  to: { network: NetworkSummary; asset: string; amount: string; min?: string; address: string }
+  rate?: string
+  duration?: string
+  fees: { label: string; value: string }[]
+  steps: string[]
+  simulation: { ok: boolean; detail: string }
+  checks: RiskCheck[]
+  progress?: string
+  hash?: string
+  explorerUrl?: string
+  destHash?: string
+  destExplorerUrl?: string
+  error?: string
+}
+
+export type Card = TransferCard | BalanceCard | NetworkCard | InfoCard | DappRequestCard | DappProposalCard | DappCommandCard | RouteCard
 
 export interface ChatResponse {
   reply: string

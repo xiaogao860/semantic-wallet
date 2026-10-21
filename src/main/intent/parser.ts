@@ -3,7 +3,7 @@
 import { z } from 'zod'
 import { type LlmConfig, completeJson } from './llm'
 
-export const ACTIONS = ['transfer', 'balance', 'use_network', 'add_rpc', 'add_contact', 'show_address', 'history', 'dapp_list', 'dapp_disconnect'] as const
+export const ACTIONS = ['transfer', 'swap', 'bridge', 'balance', 'use_network', 'add_rpc', 'add_contact', 'show_address', 'history', 'dapp_list', 'dapp_disconnect'] as const
 
 const nullableString = { anyOf: [{ type: 'string' }, { type: 'null' }] }
 
@@ -17,7 +17,7 @@ export const INTENT_JSON_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['action', 'network', 'asset', 'amount', 'recipient', 'name', 'url'],
+        required: ['action', 'network', 'asset', 'amount', 'recipient', 'name', 'url', 'to_network', 'to_asset'],
         properties: {
           action: { type: 'string', enum: [...ACTIONS] },
           network: nullableString,
@@ -25,7 +25,9 @@ export const INTENT_JSON_SCHEMA = {
           amount: nullableString,
           recipient: nullableString,
           name: nullableString,
-          url: nullableString
+          url: nullableString,
+          to_network: nullableString,
+          to_asset: nullableString
         }
       }
     },
@@ -44,7 +46,9 @@ const IntentZ = z.object({
     .nullable(),
   recipient: z.string().nullable(),
   name: z.string().nullable(),
-  url: z.string().nullable()
+  url: z.string().nullable(),
+  to_network: z.string().nullable(),
+  to_asset: z.string().nullable()
 })
 
 const ParseZ = z.object({
@@ -61,6 +65,8 @@ const SYSTEM = `你是一个多链加密钱包的意图解析器。你的唯一�
 
 可用 action：
 - transfer：转账。network=用户说的链（原话，如 "Base"、"波场"、"sol 测试网"），asset=币种符号或用户给的代币合约地址，amount=数量，recipient=收款方（联系人名字、地址或 ENS，保持原样）
+- swap：同一条链上兑换币种。network=链（没说就 null），asset=卖出的币，amount=卖出数量，to_asset=换成的币
+- bridge：跨链。network=从哪条链，to_network=到哪条链（必填），asset=转出的币，amount=数量，to_asset=到账的币（没说就 null，表示同一种币）
 - balance：查余额。network 可为 null（表示查默认网络），asset 可为 null（表示原生币 + 常用稳定币）
 - use_network：添加 / 切换 / 测速某条链，network 必填
 - add_rpc：用户提供自己的 RPC 节点，network 与 url 必填
@@ -71,7 +77,7 @@ const SYSTEM = `你是一个多链加密钱包的意图解析器。你的唯一�
 - dapp_disconnect：断开网站连接，name=网站名（如 "Uniswap"），断开全部时 name 为 null
 
 规则：
-1. 只输出一个 JSON 对象，格式：{"intents":[...],"clarify":null,"reply":"..."}。每个 intent 必须包含全部 7 个字段：action, network, asset, amount, recipient, name, url，没有的填 null。
+1. 只输出一个 JSON 对象，格式：{"intents":[...],"clarify":null,"reply":"..."}。每个 intent 必须包含全部 9 个字段：action, network, asset, amount, recipient, name, url, to_network, to_asset，没有的填 null。
 2. 绝对不要编造、补全或修改地址、合约地址、URL；只能原样复制用户给出的内容。
 3. amount 只能是十进制数字字符串（如 "0.5"、"100"），或 "max"（全部 / 所有 / 全转）。中文数字要换算，如 "五十" → "50"，"一千" → "1000"。
 4. 币种：中文圈 "U" 通常指 USDT；"刀"、"美元"、"美金" 在没有更多信息时也按 USDT 理解，但要在 reply 里说明。
@@ -84,10 +90,16 @@ const SYSTEM = `你是一个多链加密钱包的意图解析器。你的唯一�
 
 示例：
 用户：给小王转 50U，走波场
-{"intents":[{"action":"transfer","network":"波场","asset":"USDT","amount":"50","recipient":"小王","name":null,"url":null}],"clarify":null,"reply":"在波场上给小王转 50 USDT"}
+{"intents":[{"action":"transfer","network":"波场","asset":"USDT","amount":"50","recipient":"小王","name":null,"url":null,"to_network":null,"to_asset":null}],"clarify":null,"reply":"在波场上给小王转 50 USDT"}
+
+用户：把 0.01 ETH 换成 USDC
+{"intents":[{"action":"swap","network":null,"asset":"ETH","amount":"0.01","recipient":null,"name":null,"url":null,"to_network":null,"to_asset":"USDC"}],"clarify":null,"reply":"把 0.01 ETH 兑换成 USDC"}
+
+用户：把 Arbitrum 上的 USDC 全部跨到 Solana
+{"intents":[{"action":"bridge","network":"Arbitrum","asset":"USDC","amount":"max","recipient":null,"name":null,"url":null,"to_network":"Solana","to_asset":null}],"clarify":null,"reply":"把 Arbitrum 上的全部 USDC 跨链到 Solana"}
 
 用户：查一下 base 和 sol 的余额
-{"intents":[{"action":"balance","network":"base","asset":null,"amount":null,"recipient":null,"name":null,"url":null},{"action":"balance","network":"sol","asset":null,"amount":null,"recipient":null,"name":null,"url":null}],"clarify":null,"reply":"查询 Base 和 Solana 上的余额"}`
+{"intents":[{"action":"balance","network":"base","asset":null,"amount":null,"recipient":null,"name":null,"url":null,"to_network":null,"to_asset":null},{"action":"balance","network":"sol","asset":null,"amount":null,"recipient":null,"name":null,"url":null,"to_network":null,"to_asset":null}],"clarify":null,"reply":"查询 Base 和 Solana 上的余额"}`
 
 export interface ParseContext {
   defaultNetwork: string

@@ -190,7 +190,7 @@ button.ghost:hover:not(:disabled) { color: var(--text); background: var(--panel-
 .compact .card td { padding: 4px; font-size: 12px; }
 .compact .mono { font-size: 11.5px; }
 .compact .transfer .amount { font-size: 22px; margin-bottom: 8px; }
-.compact .transfer dl { grid-template-columns: 52px 1fr; font-size: 12.5px; }
+.compact .transfer dl { grid-template-columns: 60px 1fr; font-size: 12.5px; }
 .compact .checks { font-size: 12.5px; }
 .compact .composer { padding: 10px 12px 12px; gap: 6px; }
 .compact .composer textarea { min-height: 38px; padding: 8px 10px; }
@@ -236,3 +236,14 @@ button.ghost:hover:not(:disabled) { color: var(--text); background: var(--panel-
 .c-link.on { border-color: var(--ok); }
 .c-badge { position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; border-radius: 8px; background: var(--ok); color: #111; font-size: 10px; font-weight: 700; display: grid; place-items: center; padding: 0 4px; }
 .compact .dapp-title { font-size: 15px; }
+
+/* ---------- 兑换 / 跨链 ---------- */
+.legs { display: flex; align-items: center; gap: 12px; margin: 6px 0 12px; }
+.leg { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; background: var(--panel-2); border-radius: 10px; padding: 10px 12px; }
+.leg b { font-size: 18px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leg b span { font-size: 13px; color: var(--muted); }
+.legs .arrow { color: var(--muted); font-size: 18px; }
+.route dd { white-space: pre-line; }
+.compact .legs { gap: 6px; }
+.compact .leg { padding: 8px 10px; }
+.compact .leg b { font-size: 15px; }

@@ -70,7 +70,19 @@ API Key 和加密后的助记词只保存在本机用户数据目录（Windows�
 | 全部转给小王 | 自动扣除手续费后的最大金额 |
 | 我的收款地址 / 最近转账记录 | 查询 |
 
-## 连接网站（WalletConnect）
+## 兑换与跨链
+
+| 场景 | 走哪里 |
+|---|---|
+| 主网兑换 / 跨链（EVM 各链、EVM ↔ Solana、跨到 Tron 收款） | [LI.FI](https://li.fi) 聚合器，自动选最优路线 |
+| 测试网兑换（Sepolia、Base Sepolia） | Uniswap V3（三个费率档位取最优），ETH ↔ WETH 直接包装 |
+| 测试网跨链 | Sepolia → Base Sepolia / OP Sepolia（官方 L1StandardBridge）、→ Arbitrum Sepolia（官方 Inbox） |
+
+说法示例：「把 0.01 ETH 换成 USDC」「把 Arbitrum 上的 USDC 全部跨到 Solana」「从 Sepolia 跨 0.05 ETH 到 Base Sepolia」。
+
+安全措施：合约地址白名单（都在链上核对过）；聚合器返回的交易必须指向 LI.FI 官方合约、收付款人都是自己、目标代币一致；ERC-20 只授权本次金额；价格损耗超过 3% 警告、超过 10% 拦截；签名前重新报价，到账下限变差就不签。
+
+
 
 1. 在 [cloud.reown.com](https://cloud.reown.com) 免费创建项目，把项目 ID 填到「设置 → 连接网站」
 2. 在网站上点「连接钱包 → WalletConnect」，复制连接码（`wc:` 开头）

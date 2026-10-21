@@ -12,6 +12,7 @@ import { type Intent, parseIntent } from './intent/parser'
 import { describeLlmError } from './intent/llm'
 import { addresses, signers } from './keystore'
 import { recipientChecks } from './risk'
+import { planRoute } from './routes'
 import { addCustomRpc, probe } from './rpc'
 import { llmConfig, setPrefs, settings } from './settings'
 import { readJson, writeJson } from './store'
@@ -241,10 +242,30 @@ async function doTransfer(intent: Intent): Promise<Card> {
   return card
 }
 
+// 兑换 / 跨链：解析两端网络和资产后交给 routes
+async function doRoute(intent: Intent): Promise<Card> {
+  if (!intent.amount) throw new Error('没有说数量')
+  const mode = intent.action === 'bridge' ? 'bridge' : 'swap'
+  if (mode === 'bridge' && !intent.to_network) throw new Error('没有说跨到哪条链')
+  if (mode === 'swap' && !intent.to_asset) throw new Error('没有说换成什么币')
+  const from = pickNetwork(intent.network)
+  const to = mode === 'bridge' ? pickNetwork(intent.to_network) : from
+  const fromAsset = await resolveAsset(from, intent.asset)
+  // 跨链没说目标币：同名币（原生币对原生币）
+  const toQuery = intent.to_asset ?? (fromAsset.kind === 'native' ? to.nativeSymbol : fromAsset.symbol)
+  const toAsset = await resolveAsset(to, toQuery)
+  const owner = myAddress(from.family)
+  const amount =
+    intent.amount === 'max'
+      ? await ADAPTERS[from.family].maxAmount({ network: from, from: owner, to: owner, asset: fromAsset })
+      : parseUnits(intent.amount, fromAsset.decimals)
+  return planRoute({ mode, from, to, fromAsset, toAsset, amount })
+}
+
 // 小窗顶部的余额：默认网络的原生币 + 白名单代币
 export function defaultBalances(): Promise<BalanceCard> {
   const id = settings().defaultNetwork
-  return doBalance({ action: 'balance', network: id, asset: null, amount: null, recipient: null, name: null, url: null })
+  return doBalance({ action: 'balance', network: id, asset: null, amount: null, recipient: null, name: null, url: null, to_network: null, to_asset: null })
 }
 
 async function doBalance(intent: Intent): Promise<BalanceCard> {
@@ -318,6 +339,8 @@ function doHistory(): Card {
 export async function execute(intent: Intent): Promise<Card[]> {
   switch (intent.action) {
     case 'transfer': return [await doTransfer(intent)]
+    case 'swap':
+    case 'bridge': return [await doRoute(intent)]
     case 'balance': return [await doBalance(intent)]
     case 'use_network': return doUseNetwork(intent)
     case 'add_rpc': return [await doAddRpc(intent)]

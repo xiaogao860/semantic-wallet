@@ -12,10 +12,12 @@ const EXAMPLES = [
   '把 0x000000000000000000000000000000000000dEaD 存为小王',
   '给小王转 0.0001 ETH，走 Base Sepolia',
   '波场测试网上我有多少 TRX 和 USDT',
+  '在 Base Sepolia 上把 0.001 ETH 换成 USDC',
+  '把 0.01 ETH 从 Sepolia 跨到 Base Sepolia',
   '我的收款地址是什么'
 ]
 
-const COMPACT_EXAMPLES = ['查一下余额', '我的收款地址是什么', '给小王转 0.001 ETH', '加上 Arbitrum，测一下 RPC']
+const COMPACT_EXAMPLES = ['查一下余额', '把 0.001 ETH 换成 USDC', '从 Sepolia 跨 0.01 ETH 到 Base Sepolia', '我的收款地址是什么']
 
 export default function Chat({ compact = false, onSettled }: { compact?: boolean; onSettled?: () => void }) {
   const [msgs, setMsgs] = useState<Msg[]>([])

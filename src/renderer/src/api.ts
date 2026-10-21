@@ -9,6 +9,7 @@ import type {
   LlmSettingsInput,
   NetworkRpcState,
   NetworkSummary,
+  RouteCard,
   TransferCard,
   UiMode,
   WalletStatus
@@ -35,6 +36,9 @@ export const api = {
   confirm: (id: string) => c<TransferCard>('tx:confirm', id),
   cancel: (id: string) => c<void>('tx:cancel', id),
   txStatus: (id: string) => c<TransferCard | undefined>('tx:status', id),
+  routeConfirm: (id: string) => c<RouteCard>('route:confirm', id),
+  routeCancel: (id: string) => c<void>('route:cancel', id),
+  routeStatus: (id: string) => c<RouteCard | undefined>('route:status', id),
 
   settings: () => c<AppSettingsView>('settings:get'),
   setMode: (mode: UiMode) => c<AppSettingsView>('window:setMode', mode),

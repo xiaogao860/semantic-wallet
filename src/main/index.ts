@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { ChainFamily, Contact, DappRequestInput, LlmConnectResult, LlmSettingsInput, UiMode, WalletStatus } from '../shared/types'
 import { allNetworks, getNetwork, loadRegistry, summary } from './chains/registry'
 import * as dapp from './dapp'
+import { cancelRoute, confirmRoute, routeStatus } from './routes'
 import { cancel, chat, confirm, contacts, defaultBalances, removeContact, saveContact, txStatus } from './engine'
 import { describeLlmError, listModels, testLlm } from './intent/llm'
 import * as keystore from './keystore'
@@ -59,6 +60,9 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'tx:confirm': (id: string) => confirm(id),
   'tx:cancel': (id: string) => cancel(id),
   'tx:status': (id: string) => txStatus(id),
+  'route:confirm': (id: string) => confirmRoute(id),
+  'route:cancel': (id: string) => cancelRoute(id),
+  'route:status': (id: string) => routeStatus(id),
 
   'dapp:chains': (caips: string[]) => dapp.chainsInfo(caips),
   'dapp:analyze': (input: DappRequestInput) => dapp.analyze(input),
