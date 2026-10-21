@@ -28,6 +28,10 @@ function applyMode(win: BrowserWindow, mode: UiMode): void {
   win.center()
 }
 
+// 开发模式与打包后的应用共用同一个数据目录和钥匙串条目，打包后能直接读到原来的钱包和 API Key
+app.setName('semantic-wallet')
+app.setPath('userData', join(app.getPath('appData'), 'semantic-wallet'))
+
 function status(): WalletStatus {
   return { exists: keystore.vaultExists(), unlocked: keystore.isUnlocked(), addresses: keystore.addresses() }
 }

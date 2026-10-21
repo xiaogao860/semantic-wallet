@@ -4,14 +4,15 @@
 
 > 「给小王转 50U，走波场」→ 解析意图 → 解析地址 / 代币 → 链上模拟 → 风控 → 你确认 → 本地签名广播
 
-## 下载（Windows）
+## 下载
 
 到 [Releases](../../releases) 或 [Actions](../../actions) 下载：
 
 - `SemanticWallet-Setup-x.y.z.exe`：安装版
 - `SemanticWallet-Portable-x.y.z.exe`：免安装，双击即用
+- `SemanticWallet-x.y.z-arm64.dmg`：macOS（Apple 芯片）
 
-> 安装包没有代码签名，首次运行 Windows SmartScreen 会提示「未知发布者」，点「更多信息 → 仍要运行」。
+> 安装包没有代码签名：Windows 首次运行 SmartScreen 会提示「未知发布者」，点「更多信息 → 仍要运行」；macOS 首次打开请右键应用选「打开」，如提示已损坏，执行 `xattr -cr /Applications/SemanticWallet.app`。
 
 ## 从源码运行
 
@@ -22,11 +23,11 @@ npm run dist:win     # 打包 Windows exe（输出到 release/）
 npm run dist:mac     # 打包 macOS dmg
 ```
 
-推送到 `main` 会由 GitHub Actions 在 Windows 机器上自动打包；推送 `v*` 标签会自动发布 Release。
+推送到 `main` 会由 GitHub Actions 在 Windows / macOS 机器上自动打包；推送 `v*` 标签会自动发布 Release。
 
 首次启动：创建或导入助记词 → 默认是小窗模式（约 MetaMask 弹窗大小），点右上角「⋯ → 模型与安全设置」，选服务商后粘贴 API Key 即自动识别并连接。默认用 DeepSeek V4.1 Flash（`deepseek-flash`），也支持 Claude 官方、OpenAI 官方，以及任何兼容 Anthropic / OpenAI 协议的接口。
 
-API Key 和加密后的助记词只保存在本机用户数据目录（Windows 安装版：`%APPDATA%\SemanticWallet`；macOS 开发模式：`~/Library/Application Support/semantic-wallet`），不在项目目录里。
+API Key 和加密后的助记词只保存在本机用户数据目录（Windows：`%APPDATA%\semantic-wallet`；macOS：`~/Library/Application Support/semantic-wallet`），不在项目目录里。
 
 ## 核心设计：LLM 只理解，不执行
 

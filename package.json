@@ -10,8 +10,8 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "seed": "tsx scripts/build-seed.mts",
-    "dist:win": "electron-vite build && electron-builder --win --x64",
-    "dist:mac": "electron-vite build && electron-builder --mac"
+    "dist:win": "electron-vite build && electron-builder --win --x64 --publish never",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.137.0",
@@ -86,10 +86,16 @@
     },
     "mac": {
       "target": [
-        "dmg"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
+      "icon": "build/icon.icns",
       "category": "public.app-category.finance",
-      "icon": "build/icon.png"
+      "identity": null
     },
     "npmRebuild": false
   }
