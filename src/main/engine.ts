@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { formatUnits, parseUnits } from 'viem'
 import type { BalanceCard, Card, ChainFamily, ChatResponse, Contact, InfoCard, RiskCheck, RouteCard, TransferCard } from '../shared/types'
-import { evm, feeParams, publicClient, resolveEns, shortErr } from './adapters/evm'
+import { evm, explainError, feeParams, publicClient, resolveEns, shortErr } from './adapters/evm'
 import { solana } from './adapters/solana'
 import { tron } from './adapters/tron'
 import type { Asset, ChainAdapter, TransferParams } from './adapters/types'
@@ -559,7 +559,7 @@ export async function confirm(id: string): Promise<TransferCard> {
     })
     sent.set(id, card)
   } catch (e) {
-    Object.assign(card, { status: 'failed', error: shortErr(e) })
+    Object.assign(card, { status: 'failed', error: explainError(e) })
   }
   return card
 }

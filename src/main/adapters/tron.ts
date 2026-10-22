@@ -77,7 +77,8 @@ async function estimate(t: TronWeb, p: TransferParams) {
       simulation.detail = `triggerConstantContract 模拟通过，需要能量 ${energyNeeded}（可用 ${res.energy}）`
     } catch (e) {
       energyNeeded = 130_000n
-      simulation = { ok: false, detail: `模拟失败：${(e as Error).message}`.slice(0, 200) }
+      const msg = (e as Error).message
+      simulation = { ok: false, detail: `模拟失败：${/REVERT/i.test(msg) ? '合约拒绝执行（多半是代币余额不足）' : msg}`.slice(0, 200) }
     }
     const burn = energyNeeded > BigInt(res.energy) ? energyNeeded - BigInt(res.energy) : 0n
     fee += burn * energyPrice

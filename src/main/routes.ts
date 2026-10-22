@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { VersionedTransaction } from '@solana/web3.js'
 import { type Hex, encodeFunctionData, erc20Abi, formatUnits, parseAbi } from 'viem'
 import type { RiskCheck, RouteCard } from '../shared/types'
-import { evm, feeParams, publicClient, sendCall, shortErr } from './adapters/evm'
+import { evm, explainError, explainSolana, feeParams, publicClient, sendCall, shortErr } from './adapters/evm'
 import { onSolana, solana } from './adapters/solana'
 import type { Asset, ChainAdapter } from './adapters/types'
 import { tron } from './adapters/tron'
@@ -201,7 +201,7 @@ async function simulateEvm(n: Network, owner: string, call: Call, approve?: Plan
     const gas = await c.estimateGas({ account: owner as Hex, ...call })
     return { ok: true, detail: `eth_call 模拟通过，预估 gas ${gas}`, gas }
   } catch (e) {
-    return { ok: false, detail: `模拟失败：${shortErr(e)}`, gas: 300_000n }
+    return { ok: false, detail: `模拟失败：${explainError(e, { symbol: n.nativeSymbol, decimals: n.nativeDecimals })}`, gas: 300_000n }
   }
 }
 
@@ -470,7 +470,7 @@ async function planLifi(r: RouteRequest, opts: LifiOpts = {}): Promise<Plan> {
     if (tx.message.staticAccountKeys[0].toBase58() !== me('solana')) card.checks.push({ level: 'danger', text: '交易付款人不是你的 Solana 地址' })
     card.simulation = await onSolana(r.from, async (c) => {
       const sim = await c.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true })
-      return sim.value.err ? { ok: false, detail: `模拟失败：${JSON.stringify(sim.value.err)}` } : { ok: true, detail: `simulateTransaction 通过，消耗 ${sim.value.unitsConsumed ?? '?'} CU` }
+      return sim.value.err ? { ok: false, detail: `模拟失败：${explainSolana(sim.value.err)}` } : { ok: true, detail: `simulateTransaction 通过，消耗 ${sim.value.unitsConsumed ?? '?'} CU` }
     })
     sourceFee = 10_000n
   }
@@ -563,7 +563,7 @@ export async function confirmRoute(id: string): Promise<RouteCard> {
     Object.assign(card, { status: 'sent', hash, explorerUrl: explorerTx(p.from, hash), progress: '已广播，等待确认…' })
     sent.set(id, { ...p, hash })
   } catch (e) {
-    Object.assign(card, { status: 'failed', error: shortErr(e) })
+    Object.assign(card, { status: 'failed', error: explainError(e) })
   }
   return card
 }

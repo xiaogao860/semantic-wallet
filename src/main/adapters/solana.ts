@@ -19,6 +19,7 @@ import type { RiskCheck } from '../../shared/types'
 import type { Network } from '../chains/registry'
 import { withRpc } from '../rpc'
 import type { ChainAdapter, TransferParams } from './types'
+import { explainSolana } from './evm'
 
 const conns = new Map<string, Connection>()
 function conn(url: string): Connection {
@@ -115,7 +116,7 @@ export const solana: ChainAdapter = {
       const baseFee = BigInt((await c.getFeeForMessage(msg)).value ?? 5000)
       const sim = await c.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true })
       const simulation = sim.value.err
-        ? { ok: false, detail: `模拟失败：${JSON.stringify(sim.value.err)} ${(sim.value.logs ?? []).slice(-1)[0] ?? ''}`.slice(0, 200) }
+        ? { ok: false, detail: `模拟失败：${explainSolana(sim.value.err, (sim.value.logs ?? []).slice(-1)[0] ?? '')}` }
         : { ok: true, detail: `simulateTransaction 通过，消耗 ${sim.value.unitsConsumed ?? '?'} CU` }
       return { fee: baseFee + rent, simulation, checks }
     })

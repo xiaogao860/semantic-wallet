@@ -14,7 +14,7 @@ import {
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import type { DappField, DappRequestCard, DappRequestInput, RiskCheck } from '../shared/types'
-import { evm, feeParams, publicClient, sendCall, shortErr } from './adapters/evm'
+import { evm, explainError, feeParams, publicClient, sendCall, shortErr } from './adapters/evm'
 import { type Network, allNetworks, explorerTx, getNetwork, summary } from './chains/registry'
 import { completeJson } from './intent/llm'
 import { addresses, signers } from './keystore'
@@ -301,7 +301,7 @@ async function sendTx(input: DappRequestInput, me: string, n: Network) {
     if (bal < fee + value) checks.push({ level: 'danger', text: `${n.nativeSymbol} 余额不足以支付金额和手续费` })
     simulation.detail = `eth_call 模拟通过，预估 gas ${gas}`
   } catch (e) {
-    simulation = { ok: false, detail: `模拟失败：${shortErr(e)}` }
+    simulation = { ok: false, detail: `模拟失败：${explainError(e, { symbol: n.nativeSymbol, decimals: n.nativeDecimals })}` }
     checks.push({ level: 'danger', text: simulation.detail })
   }
 

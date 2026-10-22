@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { type Hex, encodeFunctionData, erc20Abi, formatUnits, keccak256, parseAbi, parseUnits, stringToHex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import type { LimitOrderCard, OrdersCard, RiskCheck } from '../shared/types'
-import { evm, feeParams, publicClient, sendCall, shortErr } from './adapters/evm'
+import { evm, explainError, feeParams, publicClient, sendCall, shortErr } from './adapters/evm'
 import type { Asset } from './adapters/types'
 import { type Network, getNetwork, summary } from './chains/registry'
 import { addresses, signers } from './keystore'
@@ -233,7 +233,7 @@ export async function confirmLimit(id: string): Promise<LimitOrderCard> {
     Object.assign(card, { status: 'open', uid, explorerUrl: explorer(n, uid) })
     placed.set(id, { card, network: n })
   } catch (e) {
-    Object.assign(card, { status: 'failed', error: shortErr(e) })
+    Object.assign(card, { status: 'failed', error: explainError(e) })
   }
   return card
 }

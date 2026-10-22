@@ -1,6 +1,7 @@
 // EVM 全系适配：任何 chainlist 里的链都能用，RPC 来自自动配置的前 3 名，fallback 自动切换。
 import {
   type Chain,
+  formatUnits,
   type PublicClient,
   createPublicClient,
   createWalletClient,
@@ -98,6 +99,49 @@ export async function sendCall(
   return wallet.sendTransaction({ ...call, gas, ...params } as Parameters<typeof wallet.sendTransaction>[0])
 }
 
+// 把节点 / viem 的英文报错翻译成看得懂的话；认不出来的保留原文
+export function explainError(e: unknown, native?: { symbol: string; decimals: number }): string {
+  const raw = shortErr(e)
+  const any = e as { shortMessage?: string; details?: string; message?: string }
+  const full = `${any.shortMessage ?? ''} ${any.details ?? ''} ${any.message ?? ''}` // 未截断的原文，用来取金额
+  const m = full.toLowerCase() || raw.toLowerCase()
+  if (/insufficient funds|exceeds the balance of the account|outoffunds|out of funds|lack of funds/.test(m)) {
+    const hw = /have (\d+) want (\d+)/.exec(full)
+    const amt = (v: string) => {
+      const x = Number(formatUnits(BigInt(v), native!.decimals))
+      return x === 0 ? '0' : x.toPrecision(4).replace(/\.?0+$/, '')
+    }
+    const amounts = hw && native ? `：需要约 ${amt(hw[2])} ${native.symbol}，现有 ${amt(hw[1])} ${native.symbol}` : ''
+    return `${native?.symbol ?? '原生币'}余额不够支付这笔交易的金额和手续费（gas）${amounts}`
+  }
+  if (/transfer amount exceeds balance|burn amount exceeds balance|insufficient balance|exceeds balance/.test(m)) return '代币余额不足'
+  if (/allowance/.test(m)) return '代币授权额度不足，需要先授权'
+  if (/nonce too low|replacement transaction underpriced|already known/.test(m)) return '有一笔交易还在处理中，稍后再试'
+  if (/max fee per gas less than block base fee|fee too low|underpriced/.test(m)) return '手续费出价低于网络当前要求，稍后重试'
+  if (/intrinsic gas too low|out of gas/.test(m)) return 'gas 不够，交易执行不完'
+  if (/timeout|timed out|fetch failed|econn|socket/.test(m)) return '节点没有响应，稍后再试或换个节点'
+  if (/too little received|insufficient_output_amount|insufficient output amount|slippage|price impact too high/.test(m)) return '价格变动超过了滑点保护，稍后重新报价再试'
+  if (/transaction too old|expired|deadline/.test(m)) return '交易已过期，请重新发起'
+  if (/execution reverted|reverted/.test(m)) {
+    const reason = /reverted(?: with reason(?: string)?)?[:\s]+["']?([^"')（]{3,80})/i.exec(full)?.[1]?.trim().replace(/\.$/, '')
+    return `合约拒绝执行${reason && !/unknown reason/i.test(reason) ? `：${reason}` : '（常见原因：余额不足、价格变动超过滑点、参数不对）'}`
+  }
+  return raw
+}
+
+// Solana 程序报错：常见的错误码翻译成中文
+export function explainSolana(err: unknown, lastLog = ''): string {
+  const s = JSON.stringify(err)
+  if (/InsufficientFundsForFee/.test(s)) return 'SOL 余额不够支付手续费'
+  if (/InsufficientFundsForRent/.test(s)) return 'SOL 余额不够支付账户租金（新账户至少要留一点 SOL）'
+  if (/AccountNotFound/.test(s)) return '付款账户在链上不存在（还没有收到过 SOL）'
+  if (/"Custom":1\b/.test(s)) return '代币余额不足'
+  if (/InvalidArgument|InvalidAccountData/.test(s)) return '账户状态不支持这个操作（例如付款账户带有数据）'
+  if (/BlockhashNotFound/.test(s)) return '交易过期了，请重新发起'
+  if (/"Custom":6001|SlippageToleranceExceeded/.test(s)) return '价格变动超过滑点保护'
+  return `${s}${lastLog ? ` ${lastLog}` : ''}`.slice(0, 200)
+}
+
 export async function resolveEns(name: string): Promise<string | null> {
   const c = await publicClient(getNetwork('evm:1'))
   return c.getEnsAddress({ name: normalize(name) })
@@ -146,7 +190,7 @@ export const evm: ChainAdapter = {
       simulation.detail = `eth_call 模拟通过，预估 gas ${gas}`
     } catch (e) {
       gas = p.asset.kind === 'native' ? 21_000n : 65_000n
-      simulation = { ok: false, detail: `模拟失败：${shortErr(e)}` }
+      simulation = { ok: false, detail: `模拟失败：${explainError(e, { symbol: p.network.nativeSymbol, decimals: p.network.nativeDecimals })}` }
     }
     return { fee: ((gas * GAS_BUFFER) / 100n) * perGas, simulation, checks }
   },
