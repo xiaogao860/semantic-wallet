@@ -3,7 +3,7 @@
 import { z } from 'zod'
 import { type LlmConfig, completeJson } from './llm'
 
-export const ACTIONS = ['transfer', 'swap', 'bridge', 'balance', 'use_network', 'add_rpc', 'add_contact', 'show_address', 'history', 'dapp_list', 'dapp_disconnect'] as const
+export const ACTIONS = ['transfer', 'swap', 'bridge', 'sweep', 'balance', 'use_network', 'add_rpc', 'add_contact', 'show_address', 'history', 'dapp_list', 'dapp_disconnect'] as const
 
 const nullableString = { anyOf: [{ type: 'string' }, { type: 'null' }] }
 
@@ -67,6 +67,7 @@ const SYSTEM = `你是一个多链加密钱包的意图解析器。你的唯一�
 - transfer：转账。network=用户说的链（原话，如 "Base"、"波场"、"sol 测试网"），asset=币种符号或用户给的代币合约地址，amount=数量，recipient=收款方（联系人名字、地址或 ENS，保持原样）
 - swap：同一条链上兑换币种。network=链（没说就 null），asset=卖出的币，amount=卖出数量，to_asset=换成的币
 - bridge：跨链。network=从哪条链，to_network=到哪条链（必填），asset=转出的币，amount=数量，to_asset=到账的币（没说就 null，表示同一种币）
+- sweep：把多种资产一次性全部换成某个币（"把我的资产全部换成 USDC""把 Base 上的币都换成 ETH"）。to_asset=目标币，network=只扫某条链时填（没说就 null，表示所有链），to_network=要集中到某条链时填，否则 null。钱包会自己查余额、逐笔生成兑换让用户确认，不需要追问币种
 - balance：查余额。network 可为 null（表示查默认网络），asset 可为 null（表示原生币 + 常用稳定币）
 - use_network：添加 / 切换 / 测速某条链，network 必填
 - add_rpc：用户提供自己的 RPC 节点，network 与 url 必填
@@ -91,6 +92,9 @@ const SYSTEM = `你是一个多链加密钱包的意图解析器。你的唯一�
 示例：
 用户：给小王转 50U，走波场
 {"intents":[{"action":"transfer","network":"波场","asset":"USDT","amount":"50","recipient":"小王","name":null,"url":null,"to_network":null,"to_asset":null}],"clarify":null,"reply":"在波场上给小王转 50 USDT"}
+
+用户：把我的资产全部转成 USDC
+{"intents":[{"action":"sweep","network":null,"asset":null,"amount":null,"recipient":null,"name":null,"url":null,"to_network":null,"to_asset":"USDC"}],"clarify":null,"reply":"把各条链上的资产全部兑换成 USDC，我先列出每一笔给你确认"}
 
 用户：把 0.01 ETH 换成 USDC
 {"intents":[{"action":"swap","network":null,"asset":"ETH","amount":"0.01","recipient":null,"name":null,"url":null,"to_network":null,"to_asset":"USDC"}],"clarify":null,"reply":"把 0.01 ETH 兑换成 USDC"}

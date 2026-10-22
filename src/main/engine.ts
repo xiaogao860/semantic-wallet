@@ -141,7 +141,9 @@ async function resolveAsset(n: Network, query: string | null): Promise<Asset> {
   // 链上核对白名单 decimals，防止内置列表出错
   const key = `${n.id}:${t.address}`
   if (!verifiedDecimals.has(key)) {
-    const meta = await adapter.tokenMeta(n, t.address)
+    const meta = await adapter.tokenMeta(n, t.address).catch((e) => {
+      throw new Error(`暂时无法在链上核对 ${t.symbol} 合约（${shortErr(e)}），请稍后再试`)
+    })
     verifiedDecimals.set(key, meta.decimals)
   }
   if (verifiedDecimals.get(key) !== t.decimals) throw new Error(`${t.symbol} 合约链上 decimals 与内置列表不一致，已拒绝`)
@@ -240,6 +242,78 @@ async function doTransfer(intent: Intent): Promise<Card> {
   }
   if (!blocked) pending.set(card.id, { card, params, fee: prepared.fee, createdAt: Date.now() })
   return card
+}
+
+// "全部换成 USDC"：扫各链余额，每个有余额的币生成一张兑换卡片，逐笔确认
+const SWEEP_NETWORKS = {
+  testnet: ['evm:11155111', 'evm:84532'], // 有 Uniswap 的测试网
+  mainnet: ['evm:1', 'evm:8453', 'evm:42161', 'evm:10', 'evm:137', 'evm:56', 'solana:mainnet']
+}
+
+async function doSweep(intent: Intent): Promise<Card[]> {
+  const target = intent.to_asset ?? 'USDC'
+  const def = getNetwork(settings().defaultNetwork)
+  const nets = intent.network ? [pickNetwork(intent.network)] : SWEEP_NETWORKS[def.isTestnet ? 'testnet' : 'mainnet'].map(getNetwork)
+  const dest = intent.to_network ? pickNetwork(intent.to_network) : null
+  const skipped: string[] = []
+
+  const perNetwork = await Promise.all(
+    nets.map(async (n, i): Promise<Card[]> => {
+      // 错开发起，避免同时打满公共节点被限流
+      await new Promise((r) => setTimeout(r, i * 300))
+      if (n.family === 'tron') {
+        skipped.push(`${n.name}：暂不支持从 Tron 发起兑换`)
+        return []
+      }
+      const adapter = ADAPTERS[n.family]
+      const owner = myAddress(n.family)
+      const toNet = dest ?? n
+      let toAsset: Asset
+      try {
+        toAsset = await resolveAsset(toNet, target)
+      } catch (e) {
+        skipped.push(`${toNet.name}：${shortErr(e)}`)
+        return []
+      }
+      const native = nativeAsset(n)
+      const assets: Asset[] = [native, ...(TOKENS[n.id] ?? []).map((t) => ({ kind: 'token' as const, ...t, listed: true }))]
+      const same = (a: Asset) => toNet.id === n.id && a.kind === toAsset.kind && (a.kind === 'native' || (toAsset.kind === 'token' && a.address.toLowerCase() === toAsset.address.toLowerCase()))
+      let balances: { asset: Asset; bal: bigint }[]
+      try {
+        balances = await Promise.all(assets.filter((a) => !same(a)).map(async (asset) => ({ asset, bal: await adapter.balance(n, owner, asset) })))
+      } catch (e) {
+        skipped.push(`${n.name}：读余额失败（${shortErr(e)}）`)
+        return []
+      }
+      const tokens = balances.filter((b) => b.asset.kind === 'token' && b.bal > 0n)
+      const nat = balances.find((b) => b.asset.kind === 'native')
+      // 原生币要给这条链上每一笔兑换都留够 gas（先换代币，再换原生币）
+      const jobs: { asset: Asset; amount: bigint }[] = tokens.map((t) => ({ asset: t.asset, amount: t.bal }))
+      if (nat && nat.bal > 0n) {
+        const reserve = (await routeGasReserve(n)) * BigInt(tokens.length + 1)
+        if (nat.bal > reserve) jobs.push({ asset: nat.asset, amount: nat.bal - reserve })
+        else if (!tokens.length) skipped.push(`${n.name} ${n.nativeSymbol}：余额只够付手续费`)
+      }
+      const cards: Card[] = []
+      for (const j of jobs) {
+        try {
+          const card = await planRoute({ mode: toNet.id === n.id ? 'swap' : 'bridge', from: n, to: toNet, fromAsset: j.asset, toAsset, amount: j.amount })
+          cards.push(card)
+        } catch (e) {
+          skipped.push(`${n.name} ${j.asset.symbol}：${shortErr(e)}`)
+        }
+      }
+      return cards
+    })
+  )
+
+  const cards = perNetwork.flat()
+  const ready = cards.filter((c) => c.kind === 'route' && c.status === 'ready').length
+  const head = cards.length
+    ? `找到 ${cards.length} 笔可以换成 ${target} 的资产${ready < cards.length ? `（其中 ${cards.length - ready} 笔被风控拦截）` : ''}，请逐笔确认。`
+    : `没有找到可以换成 ${target} 的资产。`
+  const tail = skipped.length ? `\n\n跳过：\n${skipped.join('\n')}` : ''
+  return [info(cards.length ? 'info' : 'warn', head + tail), ...cards]
 }
 
 async function routeGasReserve(n: Network): Promise<bigint> {
@@ -359,6 +433,7 @@ export async function execute(intent: Intent): Promise<Card[]> {
     case 'transfer': return [await doTransfer(intent)]
     case 'swap':
     case 'bridge': return [await doRoute(intent)]
+    case 'sweep': return doSweep(intent)
     case 'balance': return [await doBalance(intent)]
     case 'use_network': return doUseNetwork(intent)
     case 'add_rpc': return [await doAddRpc(intent)]
