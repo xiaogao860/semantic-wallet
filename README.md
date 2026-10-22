@@ -82,7 +82,19 @@ API Key 和加密后的助记词只保存在本机用户数据目录（Windows�
 
 安全措施：合约地址白名单（都在链上核对过）；聚合器返回的交易必须指向 LI.FI 官方合约、收付款人都是自己、目标代币一致；ERC-20 只授权本次金额；价格损耗超过 3% 警告、超过 10% 拦截；签名前重新报价，到账下限变差就不签。
 
+## DEX 交易
 
+| 能力 | 说法示例 | 实现 |
+|---|---|---|
+| 比价 + 指定交易所 | 「用 0.01 ETH 买 USDC」「在 Uniswap 上买」「用 1inch 卖」 | 不指定时同时询价 LI.FI 各家聚合器（1inch、OKX、KyberSwap…）和 Uniswap V3 直连，卡片列出比价、选到手最多的 |
+| 按金额 / 比例买卖 | 「买 100U 的 ETH」「买 0.1 个 ETH」「卖掉一半 SOL」 | 自动选付款稳定币；按价格换算数量 |
+| 查价 | 「ETH 现在多少钱」 | LI.FI 价格；测试网模式下也查主网真实价格 |
+| 限价单 | 「ETH 跌到 3000 时用 500U 买入」「涨到 5000 卖 0.5 个」「我的限价单」「撤销 ETH 的限价单」 | [CoW Protocol](https://cow.fi)：签名挂单不花 gas，价格到了由求解器链上成交，钱包关着也会成交；支持以太坊、Base、Arbitrum、Polygon、BSC、Avalanche、Gnosis、Sepolia |
+| 买任意代币 + 安全检测 | 「PEPE 安全吗」「在 Base 上买 0x…」 | DexScreener 按名字跨链搜索，同名币按流动性判断、拿不准就列出让你选；[GoPlus](https://gopluslabs.io) 检测蜜罐、买卖税、增发、所有者权限、持仓集中度，加上流动性和上线时间；有危险项直接拦截 |
+
+Uniswap V3 合约（以太坊、Base、Arbitrum、OP、Polygon、Sepolia、Base Sepolia）与 CoW 结算 / 授权合约都在链上核对过；限价单签名格式已用 CoW Sepolia 接口验证。
+
+## 连接网站（WalletConnect）
 
 1. 在 [cloud.reown.com](https://cloud.reown.com) 免费创建项目，把项目 ID 填到「设置 → 连接网站」
 2. 在网站上点「连接钱包 → WalletConnect」，复制连接码（`wc:` 开头）
@@ -101,7 +113,7 @@ API Key 和加密后的助记词只保存在本机用户数据目录（Windows�
 
 对话里也能说「我连了哪些网站」「断开 Uniswap」「断开所有网站」。连接码里含配对密钥，不会发给大模型。
 
-
+## 安全默认值
 
 - 默认网络是 Base Sepolia；**主网转账默认关闭**，需在设置里打开
 - 主网稳定币单笔上限 1000（可改），超出直接拦截
