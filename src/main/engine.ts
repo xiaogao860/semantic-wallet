@@ -20,7 +20,7 @@ import { addCustomRpc, probe } from './rpc'
 import { progress } from './progress'
 import { llmConfig, setPrefs, settings } from './settings'
 import { readJson, writeJson } from './store'
-import { listedByAddress, listedToken, TOKENS } from './tokens'
+import { BRIDGED, listedByAddress, listedToken, TOKENS } from './tokens'
 
 const ADAPTERS: Record<ChainFamily, ChainAdapter> = { evm, solana, tron }
 const PENDING_TTL = 10 * 60 * 1000
@@ -597,6 +597,7 @@ interface TradeToken {
   n: Network
   asset: Asset
   hit: TokenHit | null
+  notes: RiskCheck[] // 自动选择时的说明（选了哪条链 / 哪个同名币），会显示在卡片上
 }
 
 // lookup=true 用于查价 / 安全检测：不交易，测试网模式下也按主网查真实数据
@@ -604,9 +605,6 @@ async function resolveTradeToken(networkQuery: string | null, query: string | nu
   if (!query) throw new Error('没有说是哪个币')
   const current = getNetwork(settings().defaultNetwork)
   const def = lookup && current.isTestnet && !networkQuery ? getNetwork('evm:1') : current
-  if (majorOf(query)?.symbol === 'BTC' && !lookup) {
-    throw new Error('钱包暂不支持比特币主链。可以交易 EVM 链上的包装比特币：以太坊 / Arbitrum 上的 WBTC、Base 上的 cbBTC，请带上合约地址或说明链，比如「在 Base 上买 cbBTC」')
-  }
   let n = networkQuery ? pickNetwork(networkQuery) : undefined
   const sym = query.trim().toUpperCase()
 
@@ -618,30 +616,52 @@ async function resolveTradeToken(networkQuery: string | null, query: string | nu
   // 内置代币 / 原生币 / 合约地址
   try {
     const asset = await resolveAsset(base, query)
-    return { n: base, asset, hit: asset.kind === 'token' && !asset.listed ? await tokenInfo(base, asset.address) : null }
+    return { n: base, asset, hit: asset.kind === 'token' && !asset.listed ? await tokenInfo(base, asset.address) : null, notes: [] }
   } catch (e) {
     if (n && familyOfAddress(query) === n.family) throw e
+  }
+
+  // 不在支持链上的主流币（BTC、DOGE、XRP…）：用各链上的主流跨链版本。默认网络有就用它，否则用流动性最高的
+  const major = majorOf(query)
+  const bridged = major ? BRIDGED[major.symbol] : undefined
+  if (bridged) {
+    if (base.isTestnet && !lookup) throw new Error(`测试网上没有 ${major!.name}，切到主网后再试`)
+    const pool = bridged.filter((b) => !n || b.networkId === n.id)
+    if (!pool.length) {
+      throw new Error(`${major!.name} 在 ${n!.name} 上没有内置的版本，可以在这些链上交易：${bridged.map((b) => getNetwork(b.networkId).name).join('、')}`)
+    }
+    const pick = pool.find((b) => b.networkId === def.id) ?? pool[0]
+    const net = getNetwork(pick.networkId)
+    const others = pool.filter((b) => b !== pick).map((b) => `${getNetwork(b.networkId).name} 的 ${b.symbol}`)
+    const notes: RiskCheck[] = [{
+      level: 'info',
+      text: `${pick.wrapped ? `${major!.name} 不在钱包支持的链上，这里交易的是 ${net.name} 上的跨链版本 ${pick.name}（${pick.symbol}）` : `在 ${net.name} 上交易 ${pick.name}`}${others.length ? `。也可以说「在 XX 链上买」，可选：${others.join('、')}` : ''}`
+    }]
+    return { n: net, asset: { kind: 'token', symbol: pick.symbol, decimals: pick.decimals, address: pick.address, listed: true }, hit: null, notes }
   }
   // 只给了 EVM 合约地址、没说链：按流动性找它在哪条链
   if (!n && evm.isAddress(query)) {
     const hits = await findToken(query).catch(() => [])
     if (!hits.length) throw new Error('在支持的链上没找到这个合约的交易对，请说明是哪条链')
     const asset = await resolveAsset(hits[0].network, query)
-    return { n: hits[0].network, asset, hit: hits[0] }
+    return { n: hits[0].network, asset, hit: hits[0], notes: [] }
   }
   if (base.isTestnet) throw new Error(`测试网只能交易内置代币（${[base.nativeSymbol, ...(TOKENS[base.id] ?? []).map((t) => t.symbol)].join('、')}），或者直接给合约地址`)
 
-  // 按名字搜：同名山寨币很多，第一名流动性要明显领先才自动选
+  // 按名字搜：同名币很多时不报错，按流动性自动选（当前链上流动性够的优先），卡片上写清选了哪个、还有哪些
   const hits = await searchTokens(query, n?.id)
   if (!hits.length) throw new Error(`没有找到叫「${query}」的代币${n ? `（${n.name}）` : ''}，可以直接给合约地址`)
-  if (hits.length > 1 && hits[0].liquidityUsd < hits[1].liquidityUsd * 5) {
-    const list = hits.slice(0, 4).map((h, i) => `${i + 1}. ${h.symbol}（${h.network.name}）流动性 $${Math.round(h.liquidityUsd).toLocaleString()}，合约 ${h.address}`)
-    throw new Error(`「${query}」有多个同名代币，请${n ? '' : '说明是哪条链，或'}直接给合约地址：\n${list.join('\n')}`)
-  }
-  const top = hits[0]
+  const dominant = hits.length === 1 || hits[0].liquidityUsd >= hits[1].liquidityUsd * 5
+  let top = hits[0]
+  if (!dominant && !n) top = hits.find((h) => h.network.id === def.id && h.liquidityUsd >= hits[0].liquidityUsd * 0.2) ?? hits[0]
+  const usd = (v: number) => `$${Math.round(v).toLocaleString()}`
+  const notes: RiskCheck[] = dominant ? [] : [{
+    level: 'warn',
+    text: `「${query}」有 ${hits.length} 个同名代币，已按流动性选了 ${top.name}（${top.network.name}，流动性 ${usd(top.liquidityUsd)}），合约 ${top.address}。其他：${hits.filter((h) => h !== top).slice(0, 3).map((h) => `${h.name}（${h.network.name}，${usd(h.liquidityUsd)}）`).join('；')}。不是这个就直接给合约地址`
+  }]
   const adapter = ADAPTERS[top.network.family]
   const meta = await adapter.tokenMeta(top.network, top.address)
-  return { n: top.network, asset: { kind: 'token', symbol: top.symbol, decimals: meta.decimals, address: adapter.normalizeAddress(top.address), listed: false }, hit: top }
+  return { n: top.network, asset: { kind: 'token', symbol: top.symbol, decimals: meta.decimals, address: adapter.normalizeAddress(top.address), listed: false }, hit: top, notes }
 }
 
 function sameAsset(a: Asset, b: Asset): boolean {
@@ -723,7 +743,9 @@ async function doBuy(intent: Intent): Promise<Card> {
       : unit === 'usd' && !(pay.kind === 'token' && STABLES.includes(pay.symbol))
         ? usdToUnits(Number(intent.amount), (await usdPrice(n, pay)) ?? 0, pay.decimals)
         : parseUnits(intent.amount, pay.decimals)
-    return planLimit({ side: 'buy', network: n, token: target.asset, quote: pay, amount, price: intent.price })
+    const card = await planLimit({ side: 'buy', network: n, token: target.asset, quote: pay, amount, price: intent.price })
+    card.checks.unshift(...target.notes)
+    return card
   }
 
   let amount: bigint
@@ -743,7 +765,7 @@ async function doBuy(intent: Intent): Promise<Card> {
   }
   if (amount <= 0n) throw new Error(`${pay.symbol} 余额不足`)
   const card = await planRoute({ mode: 'swap', from: n, to: n, fromAsset: pay, toAsset: target.asset, amount, dex: intent.dex })
-  return attachChecks(card, await tradeSafety(target))
+  return attachChecks(card, await tradeSafety(target), target.notes)
 }
 
 async function doSell(intent: Intent): Promise<Card> {
@@ -763,9 +785,13 @@ async function doSell(intent: Intent): Promise<Card> {
   } else amount = parseUnits(intent.amount, token.asset.decimals)
   if (amount <= 0n) throw new Error(`${token.asset.symbol} 余额不足`)
 
-  if (intent.price) return planLimit({ side: 'sell', network: n, token: token.asset, quote: recv, amount, price: intent.price })
+  if (intent.price) {
+    const card = await planLimit({ side: 'sell', network: n, token: token.asset, quote: recv, amount, price: intent.price })
+    card.checks.unshift(...token.notes)
+    return card
+  }
   const card = await planRoute({ mode: 'swap', from: n, to: n, fromAsset: token.asset, toAsset: recv, amount, dex: intent.dex })
-  return attachChecks(card, await tradeSafety(token))
+  return attachChecks(card, await tradeSafety(token), token.notes)
 }
 
 function money(v: number): string {
@@ -820,6 +846,7 @@ async function doTokenCheck(intent: Intent): Promise<Card> {
   }
   const hit = t.hit ?? (await tokenInfo(t.n, t.asset.address))
   const report = await security(t.n, t.asset.address, hit)
+  report.checks.unshift(...t.notes)
   if (t.asset.listed) report.checks.unshift({ level: 'ok', text: '在钱包内置白名单里（主流稳定币 / 包装币）' })
   return { ...base, address: t.asset.address, price, change24h, facts: report.facts, checks: report.checks }
 }

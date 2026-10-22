@@ -42,3 +42,36 @@ export function listedToken(networkId: string, symbol: string): TokenInfo | unde
 export function listedByAddress(networkId: string, address: string): TokenInfo | undefined {
   return TOKENS[networkId]?.find((t) => t.address.toLowerCase() === address.toLowerCase())
 }
+
+// 不在支持链上的主流币 → 各链上的主流跨链版本（已在链上核对 symbol / decimals，按流动性从高到低排）
+export interface BridgedToken {
+  networkId: string
+  address: string
+  symbol: string
+  name: string
+  decimals: number
+  wrapped: boolean // true：跨链 / 包装版本；false：本来就是这条链上的代币
+}
+
+const B = (networkId: string, address: string, symbol: string, name: string, decimals: number, wrapped = true): BridgedToken => ({ networkId, address, symbol, name, decimals, wrapped })
+
+export const BRIDGED: Record<string, BridgedToken[]> = {
+  BTC: [
+    B('evm:1', '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', 'WBTC', 'Wrapped BTC', 8),
+    B('evm:8453', '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', 'cbBTC', 'Coinbase Wrapped BTC', 8),
+    B('evm:56', '0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c', 'BTCB', 'BTCB Token', 18),
+    B('evm:42161', '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f', 'WBTC', 'Wrapped BTC', 8),
+    B('evm:137', '0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6', 'WBTC', '(PoS) Wrapped BTC', 8)
+  ],
+  DOGE: [B('evm:56', '0xbA2aE424d960c26247Dd6c32edC70B295c744C43', 'DOGE', 'Binance-Peg Dogecoin', 8)],
+  XRP: [B('evm:56', '0x1D2F0da169ceB9fC7B3144628dB156f3F6c60dBE', 'XRP', 'Binance-Peg XRP', 18)],
+  ADA: [B('evm:56', '0x3EE2200Efb3400fAbB9AacF31297cBdD1d435D47', 'ADA', 'Binance-Peg Cardano', 18)],
+  LTC: [B('evm:56', '0x4338665CBB7B2485A8855A139b75D5e34AB0DB94', 'LTC', 'Binance-Peg Litecoin', 18)],
+  TON: [B('evm:56', '0x76A797A59Ba2C17726896976B7B3747BfD1d220f', 'TONCOIN', 'Wrapped TON Coin', 9)],
+  LINK: [
+    B('evm:1', '0x514910771AF9Ca656af840dff83E8264EcF986CA', 'LINK', 'ChainLink Token', 18, false),
+    B('evm:56', '0xF8A0BF9cF54Bb92F17374d9e9A321E6a111a51bD', 'LINK', 'Binance-Peg ChainLink', 18),
+    B('evm:42161', '0xf97f4df75117a78c1A5a0DBb814Af92458539FB4', 'LINK', 'ChainLink Token', 18),
+    B('evm:8453', '0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196', 'LINK', 'ChainLink Token', 18)
+  ]
+}
