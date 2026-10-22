@@ -17,6 +17,7 @@ import { cancelMatching, listOrders, planLimit } from './limit'
 import { type TokenHit, findToken, majorOf, majorPrice, priceUsd, searchTokens, security, tokenInfo } from './market'
 import { cancelRoute, planRoute, quoteUniswap } from './routes'
 import { addCustomRpc, probe } from './rpc'
+import { progress } from './progress'
 import { llmConfig, setPrefs, settings } from './settings'
 import { readJson, writeJson } from './store'
 import { listedByAddress, listedToken, TOKENS } from './tokens'
@@ -440,7 +441,16 @@ function doHistory(): Card {
   return info('info', lines.join('\n'))
 }
 
+const ACTION_PROGRESS: Partial<Record<Intent['action'], string>> = {
+  transfer: '解析收款方并在链上模拟', swap: '询价并模拟兑换', bridge: '寻找跨链路线', sweep: '扫描各条链的余额',
+  buy: '找代币并询价', sell: '找代币并询价', price: '查询行情', token_check: '检测合约安全',
+  orders: '查询限价单', cancel_order: '撤销限价单', balance: '查询余额', use_network: '测速 RPC 节点',
+  add_rpc: '验证 RPC 节点', history: '读取记录'
+}
+
 export async function execute(intent: Intent): Promise<Card[]> {
+  const step = ACTION_PROGRESS[intent.action]
+  if (step) progress(step)
   switch (intent.action) {
     case 'transfer': return [await doTransfer(intent)]
     case 'swap':
@@ -488,6 +498,7 @@ export async function runFollowUp(intent: Intent | null): Promise<Card[]> {
 
 export async function chat(text: string): Promise<ChatResponse> {
   let parsed
+  progress('正在理解你的意思')
   try {
     parsed = await parseIntent(await llmConfig(), text, {
       defaultNetwork: getNetwork(settings().defaultNetwork).name,
@@ -524,12 +535,14 @@ export async function confirm(id: string): Promise<TransferCard> {
   const adapter = ADAPTERS[p.params.network.family]
   const s = signers()
   // 签名前重新模拟：状态变了或手续费大涨就不签
+  progress('签名前再次模拟')
   const again = await adapter.prepare(p.params)
   if (!again.simulation.ok) return Object.assign(card, { status: 'failed', error: again.simulation.detail })
   if (again.fee > (p.fee * 3n) / 2n + 1n) {
     return Object.assign(card, { status: 'expired', error: `手续费从 ${card.fee} 涨到 ${fmt(again.fee, p.params.network.nativeDecimals)} ${card.feeSymbol}，请重新确认` })
   }
   try {
+    progress('签名并广播')
     const hash = await adapter.send(p.params, s)
     Object.assign(card, { status: 'sent', hash, explorerUrl: explorerTx(p.params.network, hash) })
     pushHistory({

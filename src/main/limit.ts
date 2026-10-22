@@ -10,6 +10,7 @@ import { type Network, getNetwork, summary } from './chains/registry'
 import { addresses, signers } from './keystore'
 import { settings } from './settings'
 import { TOKENS } from './tokens'
+import { progress } from './progress'
 
 // 本钱包网络 → CoW API 路径 / 浏览器路径（合约地址已在各链核对）
 const COW: Record<string, { api: string; explorer: string }> = {
@@ -155,6 +156,7 @@ export async function planLimit(r: LimitRequest): Promise<LimitOrderCard> {
   if (gasNeed > 0n && nativeBal < gasNeed + wrap) checks.push({ level: 'danger', text: `${n.nativeSymbol} 不足以支付${wrap ? '包装和' : ''}授权的手续费` })
 
   // 现价：用同样的卖出数量向 CoW 询价
+  progress('向 CoW 询问现价')
   let marketText: string | undefined
   try {
     const q = await cow<{ quote: { buyAmount: string } }>(n, '/quote', {
@@ -206,17 +208,20 @@ export async function confirmLimit(id: string): Promise<LimitOrderCard> {
     const s = signers()
     const c = await publicClient(n)
     if (p.wrap > 0n) {
+      progress(`包装 ${n.nativeSymbol}，等待上链确认`)
       const data = encodeFunctionData({ abi: WETH_ABI, functionName: 'deposit' })
       const h = await sendCall(n, s.evm.privateKey, { to: order.sellToken, data, value: p.wrap }, 80_000n)
       if ((await c.waitForTransactionReceipt({ hash: h, timeout: 180_000 })).status !== 'success') throw new Error('包装交易失败')
     }
     const allowance = await c.readContract({ address: order.sellToken, abi: erc20Abi, functionName: 'allowance', args: [s.evm.address, VAULT_RELAYER] })
     if (allowance < order.sellAmount) {
+      progress('授权 CoW，等待上链确认')
       const data = encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [VAULT_RELAYER, order.sellAmount] })
       const gas = await c.estimateGas({ account: s.evm.address, to: order.sellToken, data })
       const h = await sendCall(n, s.evm.privateKey, { to: order.sellToken, data, value: 0n }, (gas * 12n) / 10n)
       if ((await c.waitForTransactionReceipt({ hash: h, timeout: 180_000 })).status !== 'success') throw new Error('授权交易失败')
     }
+    progress('签名并提交订单')
     const signature = await privateKeyToAccount(s.evm.privateKey).signTypedData({ domain: domain(n), types: ORDER_TYPES, primaryType: 'Order', message: order })
     const uid = await cow<string>(n, '/orders', {
       method: 'POST',

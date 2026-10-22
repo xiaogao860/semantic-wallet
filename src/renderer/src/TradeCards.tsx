@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { LimitOrderCard, OrdersCard, TokenReportCard } from '../../shared/types'
 import { api } from './api'
+import { Busy } from './Motion'
 
 const LEVEL_ICON = { ok: '✓', info: 'i', warn: '!', danger: '✕' }
 
@@ -79,6 +80,7 @@ export function LimitCard({ card: initial, onSettled }: { card: LimitOrderCard; 
           </li>
         )}
       </ul>
+      {card.status === 'signing' && <Busy label="签名挂单" />}
       {card.error && <p className="error">{card.error}</p>}
       {card.explorerUrl && (
         <p className="small">

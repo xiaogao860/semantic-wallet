@@ -19,11 +19,13 @@ import type {
 
 declare global {
   interface Window {
-    wallet: { call<T>(channel: string, ...args: unknown[]): Promise<T>; platform: string }
+    wallet: { call<T>(channel: string, ...args: unknown[]): Promise<T>; onProgress(cb: (text: string) => void): () => void; platform: string }
   }
 }
 
 const c = <T,>(channel: string, ...args: unknown[]) => window.wallet.call<T>(channel, ...args)
+
+export const onProgress = (cb: (text: string) => void) => window.wallet.onProgress(cb)
 
 export type FeaturedNetwork = NetworkSummary & { state?: NetworkRpcState }
 

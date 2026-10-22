@@ -4,6 +4,7 @@ import type { RiskCheck } from '../shared/types'
 import type { Asset } from './adapters/types'
 import { type Network, getNetwork } from './chains/registry'
 import { proxyStatus } from './proxy'
+import { progress } from './progress'
 
 const LIFI_API = 'https://li.quest/v1'
 const LIFI_CHAIN: Record<string, number> = { 'solana:mainnet': 1151111081099710, 'tron:mainnet': 728126428 }
@@ -96,6 +97,7 @@ function collect(pairs: DsPair[], accept: (p: DsPair) => boolean): TokenHit[] {
 
 // 按名字 / 符号搜代币，只返回符号或名字真的对得上的，按流动性排序
 export async function searchTokens(query: string, networkId?: string): Promise<TokenHit[]> {
+  progress(`搜索代币「${query}」`)
   const q = query.trim().toLowerCase()
   const j = await getJson<{ pairs?: DsPair[] }>(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(query.trim())}`)
   return collect(j.pairs ?? [], (p) => {
@@ -142,6 +144,7 @@ export interface SecurityReport {
 }
 
 export async function security(n: Network, address: string, hit?: TokenHit | null): Promise<SecurityReport> {
+  progress('检测合约安全（蜜罐、税率、持仓）')
   const checks: RiskCheck[] = []
   const facts: { label: string; value: string }[] = []
   try {

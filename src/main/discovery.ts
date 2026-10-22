@@ -8,6 +8,7 @@ import type { Intent } from './intent/parser'
 import { probe } from './rpc'
 import { llmConfig } from './settings'
 import { pageText, webSearch } from './websearch'
+import { progress } from './progress'
 
 const MAX_PAGES = 4
 
@@ -76,6 +77,7 @@ const byChainId = (id: number) => allNetworks().find((n) => n.family === 'evm' &
 
 export async function discoverChain(query: string, followUp: Intent | null, rpcHint?: string): Promise<DiscoveryResult> {
   // 1. 刷新注册表：新链可能刚被 chainlist / chainid.network 收录
+  progress(`没找到「${query}」，刷新链列表`)
   await refreshRegistry().catch(() => 0)
   const again = resolveNetwork(query)
   if (again.best) return { found: again.best }
@@ -93,8 +95,10 @@ export async function discoverChain(query: string, followUp: Intent | null, rpcH
 
   // 3. 联网搜索并读网页
   const q = hintId !== undefined ? `chain ID ${hintId} ${query} EVM RPC` : `${query} blockchain network chain ID RPC URL`
+  progress(`联网搜索「${query}」`)
   const results = await webSearch(q)
   if (!results.length) throw new Error(`联网搜索「${query}」没有结果，请确认网络名称，或直接提供它的 RPC 地址`)
+  progress(`阅读 ${Math.min(results.length, MAX_PAGES)} 个网页`)
   const pages = await Promise.all(results.slice(0, MAX_PAGES).map(async (r) => ({ ...r, text: await pageText(r.url).catch(() => '') })))
   const corpus = [
     ...results.map((r) => `【搜索结果】${r.title}\n${r.url}\n${r.snippet}`),
@@ -102,6 +106,7 @@ export async function discoverChain(query: string, followUp: Intent | null, rpcH
   ].join('\n\n')
 
   // 4. 模型从资料里提取参数
+  progress('从网页里提取网络参数')
   const raw = await completeJson(
     await llmConfig(), SYSTEM,
     `用户要找的网络：${query}${hintId !== undefined ? `（RPC 返回的 chainId 是 ${hintId}）` : ''}\n\n资料：\n${corpus}`, SCHEMA
@@ -119,6 +124,7 @@ export async function discoverChain(query: string, followUp: Intent | null, rpcH
   }
 
   // 5. 验证 RPC：必须原样出现在资料里（防止模型编造），且 chainId 一致
+  progress('逐个验证 RPC 节点')
   const lower = corpus.toLowerCase()
   const candidates = [...new Set([...(rpcHint ? [rpcHint] : []), ...x.rpcUrls])]
     .map((u) => u.trim().replace(/\/$/, ''))
@@ -171,6 +177,7 @@ export async function confirmDiscovery(id: string): Promise<{ network: ReturnTyp
   if (!p) throw new Error('这个网络发现结果已失效，请重新说一次')
   pending.delete(id)
   const n = addCustomNetwork(p.raw)
+  progress(`已添加 ${n.name}，测速节点`)
   await probe(n.id).catch(() => undefined)
   return { network: summary(n), followUp: p.followUp }
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { BalanceCard, Card, DiscoveryCard, NetworkCard, RouteCard, TransferCard } from '../../shared/types'
 import { api } from './api'
 import { ProposalCard, RequestCard } from './DappCards'
+import { Busy } from './Motion'
 import { LimitCard, OrdersList, TokenReport } from './TradeCards'
 
 const LEVEL_ICON = { ok: '✓', info: 'i', warn: '!', danger: '✕' }
@@ -85,6 +86,7 @@ function Transfer({ card: initial, onSettled }: { card: TransferCard; onSettled?
           </li>
         ))}
       </ul>
+      {card.status === 'sending' && <Busy label="签名并广播" />}
       {card.error && <p className="error">{card.error}</p>}
       {card.hash && (
         <p className="small">
@@ -220,7 +222,13 @@ function Route({ card: initial, onSettled }: { card: RouteCard; onSettled?: () =
           </li>
         ))}
       </ul>
-      {card.progress && card.status === 'sent' && <p className="small muted">{card.progress}</p>}
+      {card.status === 'sending' && <Busy label="签名并发送" />}
+      {card.progress && card.status === 'sent' && (
+        <p className="busy">
+          <span className="pulse-dot" />
+          {card.progress}
+        </p>
+      )}
       {card.error && <p className="error">{card.error}</p>}
       {card.hash && (
         <p className="small">

@@ -6,4 +6,11 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
   return res.data as T
 }
 
-contextBridge.exposeInMainWorld('wallet', { call, platform: process.platform })
+// 主进程的实时进度（"询价中""模拟中"…），返回取消订阅函数
+function onProgress(cb: (text: string) => void): () => void {
+  const listener = (_e: unknown, text: string) => cb(text)
+  ipcRenderer.on('progress', listener)
+  return () => ipcRenderer.removeListener('progress', listener)
+}
+
+contextBridge.exposeInMainWorld('wallet', { call, onProgress, platform: process.platform })

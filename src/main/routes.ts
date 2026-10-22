@@ -12,6 +12,7 @@ import { tron } from './adapters/tron'
 import { type Network, explorerTx, summary } from './chains/registry'
 import { type Signers, addresses, signers } from './keystore'
 import { settings } from './settings'
+import { progress } from './progress'
 
 const ADAPTERS: Record<Network['family'], ChainAdapter> = { evm, solana, tron }
 const TTL = 10 * 60 * 1000
@@ -188,6 +189,7 @@ async function allowanceNeeded(n: Network, owner: string, token: Hex, spender: H
 
 // 先模拟；需要授权时只能模拟授权本身，主交易在授权后、签名前再模拟
 async function simulateEvm(n: Network, owner: string, call: Call, approve?: Plan['approve']): Promise<{ ok: boolean; detail: string; gas: bigint }> {
+  progress('链上模拟交易')
   const c = await publicClient(n)
   try {
     if (approve) {
@@ -206,14 +208,17 @@ async function simulateEvm(n: Network, owner: string, call: Call, approve?: Plan
 async function sendEvm(n: Network, s: Signers, call: Call, approve?: Plan['approve']): Promise<string> {
   const c = await publicClient(n)
   if (approve && (await allowanceNeeded(n, s.evm.address, approve.token, approve.spender, approve.amount))) {
+    progress('发送授权交易，等待上链确认')
     // 只授权本次金额，不做无限授权
     const data = encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [approve.spender, approve.amount] })
     const gas = await c.estimateGas({ account: s.evm.address, to: approve.token, data })
     const h = await sendCall(n, s.evm.privateKey, { to: approve.token, data, value: 0n }, (gas * 12n) / 10n)
     await waitReceipt(n, h)
   }
+  progress('签名前再次模拟')
   await c.call({ account: s.evm.address, ...call })
   const gas = await c.estimateGas({ account: s.evm.address, ...call })
+  progress('签名并广播')
   return sendCall(n, s.evm.privateKey, call, (gas * 12n) / 10n)
 }
 
@@ -480,6 +485,7 @@ async function planLifi(r: RouteRequest, opts: LifiOpts = {}): Promise<Plan> {
     card, from: r.from, to: r.to, approve,
     // 报价有时效（Solana 交易里的区块哈希一两分钟就过期），签名前重新报价，到账下限不能变差
     exec: async (s) => {
+      progress('重新报价，确认价格没变差')
       const fresh = await lifiQuote(r, opts)
       if (BigInt(fresh.estimate.toAmountMin) < (min * 99n) / 100n) throw new Error('报价变差了，请重新发起')
       const bad = verifyQuote(r, fresh).find((c) => c.level === 'danger')
@@ -527,6 +533,7 @@ export async function planRoute(r: RouteRequest): Promise<RouteCard> {
     plan = await planLifi(r, { allowExchanges: dex })
   } else {
     // 不指定交易所：聚合器各家 + Uniswap 直连一起比价，选到手最多的
+    progress('向各家交易所询价比价')
     const [alts, uni] = await Promise.all([
       lifiAlternatives(r).catch(() => []),
       quoteUniswap(r.from, r.fromAsset, r.toAsset, r.amount).catch(() => null)

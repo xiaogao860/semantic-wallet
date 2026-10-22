@@ -126,10 +126,10 @@ export default function Compact({ status, onLock, onExpand }: { status: WalletSt
         <div className="c-balance">
           {main ? (
             <>
-              <span className="num">{main.amount}</span> <span className="unit">{main.asset}</span>
+              <span className="num" key={main.amount}>{main.amount}</span> <span className="unit">{main.asset}</span>
             </>
           ) : (
-            <span className="muted small">{loadingBal ? '读取余额…' : '—'}</span>
+            loadingBal ? <span className="sk balance-sk" /> : <span className="muted small">—</span>
           )}
         </div>
         {tokens.length > 0 && (

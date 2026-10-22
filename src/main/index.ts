@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { ChainFamily, Contact, DappRequestInput, LlmConnectResult, LlmSettingsInput, UiMode, WalletStatus } from '../shared/types'
 import { allNetworks, getNetwork, loadRegistry, summary } from './chains/registry'
 import * as dapp from './dapp'
+import { setProgressTarget } from './progress'
 import { cancelDiscovery, confirmDiscovery } from './discovery'
 import { cancelRoute, confirmRoute, routeStatus } from './routes'
 import { cancelLimitPlan, cancelOrder, confirmLimit, limitStatus } from './limit'
@@ -147,6 +148,7 @@ function createWindow(): void {
     if (mainWindow === win) mainWindow = null
   })
   mainWindow = win
+  setProgressTarget(win.webContents)
   if (!isMac) win.removeMenu()
 
   if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL)

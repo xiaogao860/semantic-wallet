@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Card } from '../../shared/types'
 import { api } from './api'
 import CardView from './Cards'
+import { Thinking } from './Motion'
 import { WC_URI, wc } from './walletconnect'
 
 type Msg = { role: 'user'; text: string } | { role: 'assistant'; text: string; cards: Card[] }
@@ -123,7 +124,7 @@ export default function Chat({ compact = false, onSettled }: { compact?: boolean
             </div>
           )
         )}
-        {busy && <div className="bubble bot muted">理解中…</div>}
+        {busy && <Thinking />}
         <div ref={bottom} />
       </div>
       <div className="composer">
