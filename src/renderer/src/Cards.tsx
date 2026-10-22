@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { BalanceCard, Card, NetworkCard, RouteCard, TransferCard } from '../../shared/types'
+import type { BalanceCard, Card, DiscoveryCard, NetworkCard, RouteCard, TransferCard } from '../../shared/types'
 import { api } from './api'
 import { ProposalCard, RequestCard } from './DappCards'
 import { LimitCard, OrdersList, TokenReport } from './TradeCards'
@@ -259,6 +259,97 @@ function Route({ card: initial, onSettled }: { card: RouteCard; onSettled?: () =
   )
 }
 
+function Discovery({ card: initial, onSettled }: { card: DiscoveryCard; onSettled?: () => void }) {
+  const [card, setCard] = useState(initial)
+  const [busy, setBusy] = useState(false)
+  const [after, setAfter] = useState<Card[]>([])
+  const add = async () => {
+    setBusy(true)
+    try {
+      const r = await api.discoveryConfirm(card.id)
+      setCard({ ...card, status: 'added' })
+      setAfter(r.cards)
+      onSettled?.()
+    } catch (e) {
+      setCard({ ...card, status: 'failed', error: (e as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const status = { ready: '待确认', blocked: '无法添加', added: '已添加', cancelled: '已取消', failed: '失败' }[card.status]
+  return (
+    <>
+      <div className={`card transfer discovery ${card.status === 'added' ? 'confirmed' : card.status}`}>
+        <div className="card-head">
+          <span className="tag">发现新网络{card.isTestnet ? ' · 测试网' : ''}</span>
+          <span className={`status ${card.status === 'added' ? 'confirmed' : card.status}`}>{status}</span>
+        </div>
+        <div className="amount">
+          {card.name} <span>chainId {card.chainId}</span>
+        </div>
+        <dl>
+          <dt>原生币</dt>
+          <dd>{card.nativeSymbol}</dd>
+          {card.explorer && (
+            <>
+              <dt>浏览器</dt>
+              <dd className="break">{card.explorer}</dd>
+            </>
+          )}
+          <dt>RPC</dt>
+          <dd>
+            {card.rpcs.map((r) => (
+              <div key={r.url} className={`rpc ${r.ok ? 'ok' : 'bad'}`}>
+                {r.ok ? '✓' : '✕'} <span className="mono">{r.url.replace(/^https:\/\//, '')}</span>
+                <span className="muted small"> {r.ok ? `${r.latencyMs}ms` : r.error}</span>
+              </div>
+            ))}
+          </dd>
+          <dt>来源</dt>
+          <dd>
+            {card.sources.map((s) => (
+              <div key={s}>
+                <a href={s} target="_blank" rel="noreferrer" className="small break">
+                  {s.replace(/^https?:\/\//, '').slice(0, 60)}
+                </a>
+              </div>
+            ))}
+          </dd>
+        </dl>
+        <ul className="checks">
+          {card.checks.map((c, i) => (
+            <li key={i} className={c.level}>
+              <span className="icon">{LEVEL_ICON[c.level]}</span>
+              {c.text}
+            </li>
+          ))}
+        </ul>
+        {card.followUp && card.status === 'ready' && <p className="small muted">{card.followUp}</p>}
+        {card.error && <p className="error">{card.error}</p>}
+        {card.status === 'ready' && (
+          <div className="row">
+            <button
+              className="ghost"
+              onClick={() => {
+                void api.discoveryCancel(card.id)
+                setCard({ ...card, status: 'cancelled' })
+              }}
+            >
+              取消
+            </button>
+            <button className="primary" disabled={busy} onClick={() => void add()}>
+              {busy ? '添加中…' : '添加网络'}
+            </button>
+          </div>
+        )}
+      </div>
+      {after.map((c, i) => (
+        <CardView key={i} card={c} onSettled={onSettled} />
+      ))}
+    </>
+  )
+}
+
 function Balances({ card }: { card: BalanceCard }) {
   return (
     <div className="card">
@@ -313,6 +404,8 @@ export default function CardView({ card, onSettled }: { card: Card; onSettled?: 
       return <Network card={card} />
     case 'route':
       return <Route card={card} onSettled={onSettled} />
+    case 'discovery':
+      return <Discovery card={card} onSettled={onSettled} />
     case 'limit':
       return <LimitCard card={card} onSettled={onSettled} />
     case 'orders':

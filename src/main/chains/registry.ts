@@ -14,7 +14,7 @@ export interface Network extends NetworkSummary {
   genesis?: string // Solana 用于校验 RPC 是否连到了正确的网络
 }
 
-interface RawChain {
+export interface RawChain {
   name: string
   chainId: number
   shortName?: string
@@ -25,6 +25,7 @@ interface RawChain {
   nativeCurrency: { symbol: string; decimals: number }
   rpc: ({ url: string; tracking?: string } | string)[]
   explorers?: { url: string }[]
+  extraAliases?: string[] // 自定义网络：用户当时的叫法
 }
 
 const CHAINLIST_URL = 'https://chainlist.org/rpcs.json'
@@ -112,7 +113,7 @@ function fromRaw(c: RawChain): Network {
     nativeDecimals: c.nativeCurrency.decimals,
     explorer: c.explorers?.[0]?.url?.replace(/\/$/, ''),
     rpcCandidates: [...new Set(urls)].slice(0, MAX_CANDIDATES),
-    aliases: [...(EVM_ALIASES[c.chainId] ?? []), c.shortName, c.chainSlug, c.name]
+    aliases: [...(EVM_ALIASES[c.chainId] ?? []), ...(c.extraAliases ?? []), c.shortName, c.chainSlug, c.name]
       .filter((x): x is string => !!x)
       .map(norm),
     tvl: c.tvl ?? 0
@@ -123,11 +124,71 @@ function rank(tracking?: string): number {
   return tracking === 'none' ? 0 : tracking === 'limited' ? 1 : tracking === 'yes' ? 3 : 2
 }
 
+const CUSTOM_FILE = 'custom-networks.json'
+const CHAINID_URL = 'https://chainid.network/chains.json'
+let lastRaw: RawChain[] = []
+
+// 用户添加过的网络（联网发现的陌生链）
+function customChains(): RawChain[] {
+  return readJson<RawChain[]>(CUSTOM_FILE, [])
+}
+
 function install(raw: RawChain[]): void {
-  const evm = raw.filter((c) => c.status !== 'deprecated' && c.rpc?.length).map(fromRaw).filter((n) => n.rpcCandidates.length)
+  lastRaw = raw
+  const known = new Set(raw.map((c) => c.chainId))
+  const all = [...raw, ...customChains().filter((c) => !known.has(c.chainId))]
+  const evm = all.filter((c) => c.status !== 'deprecated' && c.rpc?.length).map(fromRaw).filter((n) => n.rpcCandidates.length)
   networks = [...NON_EVM.map((n) => ({ ...n, aliases: n.aliases.map(norm) })), ...evm]
   byId.clear()
+  aliasKeys = null
   for (const n of networks) byId.set(n.id, n)
+  for (const [id, list] of Object.entries(readJson<Record<string, string[]>>(ALIAS_FILE, {}))) {
+    const n = byId.get(id)
+    if (n) n.aliases.push(...list.filter((a) => !n.aliases.includes(a)))
+  }
+}
+
+const testnetName = (name: string) => /test|sepolia|devnet|goerli|holesky|amoy|fuji|testnet|测试/i.test(name)
+
+// 强制刷新：chainlist + chainid.network 合并（陌生链可能刚收录），返回新增的网络数
+export async function refreshRegistry(): Promise<number> {
+  const before = networks.length
+  const [chainlist, chainid] = await Promise.all([
+    fetch(CHAINLIST_URL, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json() as Promise<RawChain[]>).catch(() => null),
+    fetch(CHAINID_URL, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json() as Promise<RawChain[]>).catch(() => null)
+  ])
+  const base = Array.isArray(chainlist) && chainlist.length > 100 ? chainlist : lastRaw
+  if (base === chainlist) writeJson(CACHE_FILE, { at: Date.now(), chains: chainlist })
+  const known = new Set(base.map((c) => c.chainId))
+  const extra = (Array.isArray(chainid) ? chainid : [])
+    .filter((c) => !known.has(c.chainId))
+    .map((c) => ({ ...c, isTestnet: c.isTestnet ?? testnetName(c.name) }))
+  install([...base, ...extra])
+  return networks.length - before
+}
+
+export function addCustomNetwork(c: RawChain): Network {
+  const list = customChains().filter((x) => x.chainId !== c.chainId)
+  writeJson(CUSTOM_FILE, [...list, c])
+  install(lastRaw)
+  return getNetwork(`evm:${c.chainId}`)
+}
+
+// 已知网络补一个叫法（用户的说法和 chainlist 名字对不上时），落盘，重启后还认识
+const ALIAS_FILE = 'network-aliases.json'
+
+export function addAlias(n: Network, alias: string): void {
+  const a = norm(alias)
+  if (n.aliases.includes(a)) return
+  n.aliases.push(a)
+  const saved = readJson<Record<string, string[]>>(ALIAS_FILE, {})
+  writeJson(ALIAS_FILE, { ...saved, [n.id]: [...new Set([...(saved[n.id] ?? []), a])] })
+}
+
+export class UnknownNetworkError extends Error {
+  constructor(public query: string) {
+    super(`找不到叫「${query}」的网络`)
+  }
 }
 
 export async function loadRegistry(): Promise<void> {
@@ -178,51 +239,65 @@ function key(s: string): string {
   return norm(s).replace(/ /g, '')
 }
 
-function variants(query: string): { all: string[]; core: string } {
+function variants(query: string): { all: string[]; exactOnly: string[]; core: string } {
   const k = key(query)
   const unified = k.replace(/测试链|测试网络|testnet/g, '测试网').replace(/主链|主网络|mainnet/g, '主网')
   const noGeneric = unified.replace(/(网络|链|chain|network)$/, '')
   const core = noGeneric.replace(/测试网|主网/g, '')
-  // "arbitrum测试网" 也按英文写法 "arbitrum testnet / arbitrum sepolia" 去比
+  // "arbitrum测试网" 也按英文写法 "arbitrum testnet / arbitrum sepolia" 去比，但只做完全相等的比对：
+  // 合成出来的写法不能参与"包含"判断，否则"莫纳德sepolia"会因为包含 sepolia 误配到以太坊 Sepolia
   const english = /测试网/.test(unified) && core ? [`${core}testnet`, `${core}sepolia`] : []
-  return { all: [...new Set([k, unified, noGeneric, core, ...english].filter((v) => v.length >= 2))], core }
+  return { all: [...new Set([k, unified, noGeneric, core].filter((v) => v.length >= 2))], exactOnly: english, core }
 }
 
 const hasCjk = (s: string) => /[\u4e00-\u9fff]/.test(s)
+
+let aliasKeys: Set<string> | null = null
+function cleanRemainder(rest: string): boolean {
+  const r = rest.replace(/测试网络|测试网|测试链|主网络|主网|主链|网络|链|chain|network|testnet|mainnet|的|上/g, '')
+  if (!r) return true
+  if (!aliasKeys) aliasKeys = new Set(networks.flatMap((n) => n.aliases.map((a) => a.replace(/ /g, ''))))
+  return aliasKeys.has(r)
+}
 
 export function resolveNetwork(query: string, family?: ChainFamily): NetworkMatch {
   const pool = networks.filter((n) => !family || n.family === family)
   const idHit = pool.find((n) => n.id === query)
   if (idHit) return { best: idHit, candidates: [idHit] }
 
-  const { all, core } = variants(query)
+  const { all, exactOnly, core } = variants(query)
   const wantsTestnet = /test|测试|sepolia|devnet|nile|shasta|amoy|fuji|holesky/.test(key(query))
-  const scored: { n: Network; s: number }[] = []
+  // 明确说了主网 / 测试网才按这个过滤；没说时，完全匹配到的叫法（含用户之前用过的叫法）直接认
+  const explicitNet = wantsTestnet || /主网|主链|mainnet/.test(key(query))
+  const scored: { n: Network; s: number; exact: boolean }[] = []
   for (const n of pool) {
     const aliases = n.aliases.map((a) => a.replace(/ /g, ''))
-    let s = 0
+    let s = exactOnly.some((v) => aliases.includes(v)) ? 100 : 0
     for (const v of all) {
       if (aliases.includes(v)) s = Math.max(s, v === core && v !== all[0] ? 90 : 100)
       else if (n.chainId !== undefined && String(n.chainId) === v) s = Math.max(s, 95)
       else {
         if (v.length >= 3 && aliases.some((a) => a.startsWith(v))) s = Math.max(s, 60)
         if (v.length >= 3 && aliases.some((a) => a.includes(v))) s = Math.max(s, 40)
-        // 说法里包含别名（如"以太坊sepolia测试网"包含"sepolia"），别名越长越可信
-        const inside = aliases.filter((a) => a.length >= (hasCjk(a) ? 2 : 3) && v.includes(a))
+        // 说法里包含别名（如"以太坊sepolia"包含"sepolia"），但去掉别名后剩下的只能是泛称或别的网络名，
+        // 否则 "qorvexa" 会因为包含 "vex" 误配、"以太坊经典" 会误配到以太坊
+        const inside = aliases.filter((a) => a.length >= (hasCjk(a) ? 2 : 3) && v.includes(a) && cleanRemainder(v.replace(a, '')))
         if (inside.length) s = Math.max(s, 50 + Math.min(Math.max(...inside.map((a) => a.length)) * 2, 30))
       }
     }
     if (!s) continue
-    if (n.isTestnet !== wantsTestnet) s -= 60
+    const exact = s >= 100
+    if (n.isTestnet !== wantsTestnet && (explicitNet || !exact)) s -= 60
     // 人工整理过别名的主流网络优先（chainlist 里还有大量已废弃的同名旧测试网）
     if (n.family !== 'evm' || EVM_ALIASES[n.chainId!]) s += 12
-    scored.push({ n, s: s + Math.min(Math.log10(n.tvl + 1), 10) })
+    scored.push({ n, s: s + Math.min(Math.log10(n.tvl + 1), 10), exact })
   }
   scored.sort((a, b) => b.s - a.s)
   const candidates = scored.slice(0, 5).map((x) => x.n)
   const top = scored[0]
   // 第一名明显领先、且测试网/主网属性对得上才自动选，否则让用户挑
-  const confident = top && top.n.isTestnet === wantsTestnet && (top.s >= 85 || !scored[1] || top.s - scored[1].s >= 15)
+  const netOk = top && (top.n.isTestnet === wantsTestnet || (!explicitNet && top.exact))
+  const confident = top && netOk && (top.s >= 85 || !scored[1] || top.s - scored[1].s >= 15)
   return { best: confident ? top.n : undefined, candidates }
 }
 

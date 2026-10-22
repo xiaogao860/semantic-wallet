@@ -3,9 +3,10 @@ import { join } from 'node:path'
 import type { ChainFamily, Contact, DappRequestInput, LlmConnectResult, LlmSettingsInput, UiMode, WalletStatus } from '../shared/types'
 import { allNetworks, getNetwork, loadRegistry, summary } from './chains/registry'
 import * as dapp from './dapp'
+import { cancelDiscovery, confirmDiscovery } from './discovery'
 import { cancelRoute, confirmRoute, routeStatus } from './routes'
 import { cancelLimitPlan, cancelOrder, confirmLimit, limitStatus } from './limit'
-import { cancel, chat, confirm, contacts, defaultBalances, removeContact, saveContact, txStatus } from './engine'
+import { cancel, chat, confirm, contacts, defaultBalances, removeContact, runFollowUp, saveContact, txStatus } from './engine'
 import { describeLlmError, listModels, testLlm } from './intent/llm'
 import * as keystore from './keystore'
 import { cachedState, invalidateRpcState, loadRpcState, probe } from './rpc'
@@ -64,6 +65,11 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'route:confirm': (id: string) => confirmRoute(id),
   'route:cancel': (id: string) => cancelRoute(id),
   'route:status': (id: string) => routeStatus(id),
+  'discovery:confirm': async (id: string) => {
+    const r = await confirmDiscovery(id)
+    return { network: r.network, cards: await runFollowUp(r.followUp) }
+  },
+  'discovery:cancel': (id: string) => cancelDiscovery(id),
   'limit:confirm': (id: string) => confirmLimit(id),
   'limit:cancel': (id: string) => cancelLimitPlan(id),
   'limit:status': (id: string) => limitStatus(id),

@@ -7,7 +7,8 @@ import { evm, feeParams, publicClient, resolveEns, shortErr } from './adapters/e
 import { solana } from './adapters/solana'
 import { tron } from './adapters/tron'
 import type { Asset, ChainAdapter, TransferParams } from './adapters/types'
-import { type Network, allNetworks, explorerTx, getNetwork, resolveNetwork, summary } from './chains/registry'
+import { type Network, UnknownNetworkError, allNetworks, explorerTx, getNetwork, resolveNetwork, summary } from './chains/registry'
+import { discoverChain } from './discovery'
 import { type Intent, parseIntent } from './intent/parser'
 import { describeLlmError } from './intent/llm'
 import { addresses, signers } from './keystore'
@@ -111,7 +112,7 @@ function pickNetwork(query: string | null, recipientHint?: string | null): Netwo
     const m = resolveNetwork(query)
     if (m.best) return m.best
     if (m.candidates.length) throw new Error(`「${query}」可能是：${m.candidates.map((c) => c.name).join(' / ')}，请说得更具体一点`)
-    throw new Error(`找不到叫「${query}」的网络`)
+    throw new UnknownNetworkError(query)
   }
   const def = getNetwork(settings().defaultNetwork)
   const contact = recipientHint ? contacts().find((c) => c.name === recipientHint) : undefined
@@ -392,7 +393,16 @@ async function doUseNetwork(intent: Intent): Promise<Card[]> {
 
 async function doAddRpc(intent: Intent): Promise<Card> {
   if (!intent.network || !intent.url) throw new Error('需要链名和 RPC 地址')
-  const n = pickNetwork(intent.network)
+  let n: Network
+  try {
+    n = pickNetwork(intent.network)
+  } catch (e) {
+    // 陌生链 + 用户给了 RPC：用这个 RPC 去识别并联网补全参数
+    if (!(e instanceof UnknownNetworkError)) throw e
+    const r = await discoverChain(e.query, null, intent.url)
+    if ('card' in r) return r.card
+    n = r.found
+  }
   const state = await addCustomRpc(n.id, intent.url)
   return { kind: 'network', network: summary(n), state }
 }
@@ -454,6 +464,28 @@ export async function execute(intent: Intent): Promise<Card[]> {
   }
 }
 
+// 遇到不认识的网络：联网发现。注册表刷新后就认识了，直接重跑；否则给出"发现新网络"卡片，确认后再跑
+async function executeWithDiscovery(intent: Intent): Promise<Card[]> {
+  try {
+    return await execute(intent)
+  } catch (e) {
+    if (!(e instanceof UnknownNetworkError)) throw e
+    const r = await discoverChain(e.query, intent, intent.action === 'add_rpc' ? (intent.url ?? undefined) : undefined)
+    if ('found' in r) return execute(intent)
+    return [r.card]
+  }
+}
+
+// 确认添加陌生链之后，继续执行用户原来的指令
+export async function runFollowUp(intent: Intent | null): Promise<Card[]> {
+  if (!intent) return []
+  try {
+    return await execute(intent)
+  } catch (e) {
+    return [info('danger', shortErr(e))]
+  }
+}
+
 export async function chat(text: string): Promise<ChatResponse> {
   let parsed
   try {
@@ -472,7 +504,7 @@ export async function chat(text: string): Promise<ChatResponse> {
   const cards: Card[] = []
   for (const intent of parsed.intents) {
     try {
-      cards.push(...(await execute(intent)))
+      cards.push(...(await executeWithDiscovery(intent)))
     } catch (e) {
       cards.push(info('danger', shortErr(e)))
     }
@@ -736,12 +768,32 @@ async function doPrice(intent: Intent): Promise<Card> {
     const change = r.change24h !== undefined ? ` · 24h ${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(2)}%` : ''
     return info('info', `${major.name}（${major.symbol}）≈ $${money(r.price)}${change}`)
   }
-  const t = await resolveTradeToken(intent.network, intent.asset, true)
+  let t: TradeToken
+  try {
+    t = await resolveTradeToken(intent.network, intent.asset, true)
+  } catch (e) {
+    const list = await priceCandidates(intent).catch(() => null)
+    if (list) return list
+    throw e
+  }
   const p = (await usdPrice(t.n, t.asset)) ?? t.hit?.priceUsd ?? null
   if (!p) throw new Error(`暂时拿不到 ${t.asset.symbol} 的价格`)
   const change = t.hit?.change24h !== undefined ? ` · 24h ${t.hit.change24h >= 0 ? '+' : ''}${t.hit.change24h.toFixed(2)}%` : ''
   const note = t.n.isTestnet ? '（测试网 Uniswap 池子价格，不代表真实行情）' : ''
   return info('info', `${t.asset.symbol}（${t.n.name}）≈ $${money(p)}${change}${note}`)
+}
+
+// 查价时遇到多个同名币：把前几个的价格、链、流动性都列出来
+async function priceCandidates(intent: Intent): Promise<Card | null> {
+  if (!intent.asset) return null
+  const n = intent.network ? pickNetwork(intent.network) : undefined
+  const hits = (await searchTokens(intent.asset, n?.id)).filter((h) => h.priceUsd)
+  if (hits.length < 2) return null
+  const lines = hits.slice(0, 5).map((h, i) => {
+    const ch = h.change24h !== undefined ? ` · 24h ${h.change24h >= 0 ? '+' : ''}${h.change24h.toFixed(1)}%` : ''
+    return `${i + 1}. ${h.name}（${h.network.name}）$${money(h.priceUsd!)}${ch} · 流动性 $${Math.round(h.liquidityUsd).toLocaleString()}\n   ${h.address}`
+  })
+  return info('info', `「${intent.asset}」有 ${hits.length} 个同名代币，按流动性排列：\n${lines.join('\n')}\n\n要交易或查安全，请带上链名或合约地址。`)
 }
 
 async function doTokenCheck(intent: Intent): Promise<Card> {

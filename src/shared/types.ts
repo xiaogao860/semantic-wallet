@@ -195,7 +195,25 @@ export interface TokenReportCard {
   checks: RiskCheck[]
 }
 
+// 联网发现的陌生网络
+export interface DiscoveryCard {
+  kind: 'discovery'
+  id: string
+  status: 'ready' | 'blocked' | 'added' | 'cancelled' | 'failed'
+  name: string
+  chainId: number
+  nativeSymbol: string
+  isTestnet: boolean
+  explorer?: string
+  rpcs: { url: string; ok: boolean; latencyMs?: number; error?: string }[]
+  sources: string[]
+  checks: RiskCheck[]
+  followUp?: string
+  error?: string
+}
+
 export type Card =
+  | DiscoveryCard
   | TransferCard | BalanceCard | NetworkCard | InfoCard | DappRequestCard | DappProposalCard | DappCommandCard
   | RouteCard | LimitOrderCard | OrdersCard | TokenReportCard
 
