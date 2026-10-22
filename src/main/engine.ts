@@ -2,7 +2,7 @@
 // 确认卡片上的内容全部来自确定性代码，不来自 LLM 文本。
 import { randomUUID } from 'node:crypto'
 import { formatUnits, parseUnits } from 'viem'
-import type { BalanceCard, Card, ChainFamily, ChatResponse, Contact, InfoCard, RiskCheck, TransferCard } from '../shared/types'
+import type { BalanceCard, Card, ChainFamily, ChatResponse, Contact, InfoCard, RiskCheck, RouteCard, TransferCard } from '../shared/types'
 import { evm, feeParams, publicClient, resolveEns, shortErr } from './adapters/evm'
 import { solana } from './adapters/solana'
 import { tron } from './adapters/tron'
@@ -12,7 +12,9 @@ import { type Intent, parseIntent } from './intent/parser'
 import { describeLlmError } from './intent/llm'
 import { addresses, signers } from './keystore'
 import { recipientChecks } from './risk'
-import { planRoute } from './routes'
+import { cancelMatching, listOrders, planLimit } from './limit'
+import { type TokenHit, findToken, priceUsd, searchTokens, security, tokenInfo } from './market'
+import { cancelRoute, planRoute, quoteUniswap } from './routes'
 import { addCustomRpc, probe } from './rpc'
 import { llmConfig, setPrefs, settings } from './settings'
 import { readJson, writeJson } from './store'
@@ -349,7 +351,7 @@ async function doRoute(intent: Intent): Promise<Card> {
   } else {
     amount = parseUnits(intent.amount, fromAsset.decimals)
   }
-  const card = await planRoute({ mode, from, to, fromAsset, toAsset, amount })
+  const card = await planRoute({ mode, from, to, fromAsset, toAsset, amount, dex: intent.dex })
   if (reserve > 0n) card.checks.push({ level: 'info', text: `全部兑换：已为手续费预留 ${fmt(reserve, from.nativeDecimals)} ${from.nativeSymbol}` })
   return card
 }
@@ -357,7 +359,7 @@ async function doRoute(intent: Intent): Promise<Card> {
 // 小窗顶部的余额：默认网络的原生币 + 白名单代币
 export function defaultBalances(): Promise<BalanceCard> {
   const id = settings().defaultNetwork
-  return doBalance({ action: 'balance', network: id, asset: null, amount: null, recipient: null, name: null, url: null, to_network: null, to_asset: null })
+  return doBalance({ action: 'balance', network: id, asset: null, amount: null, recipient: null, name: null, url: null, to_network: null, to_asset: null, amount_unit: null, price: null, dex: null })
 }
 
 async function doBalance(intent: Intent): Promise<BalanceCard> {
@@ -433,6 +435,12 @@ export async function execute(intent: Intent): Promise<Card[]> {
     case 'transfer': return [await doTransfer(intent)]
     case 'swap':
     case 'bridge': return [await doRoute(intent)]
+    case 'buy': return [await doBuy(intent)]
+    case 'sell': return [await doSell(intent)]
+    case 'price': return [await doPrice(intent)]
+    case 'token_check': return [await doTokenCheck(intent)]
+    case 'orders': return [await doOrders()]
+    case 'cancel_order': return [await doCancelOrder(intent)]
     case 'sweep': return doSweep(intent)
     case 'balance': return [await doBalance(intent)]
     case 'use_network': return doUseNetwork(intent)
@@ -525,4 +533,227 @@ export async function txStatus(id: string): Promise<TransferCard | undefined> {
 
 export function networkList() {
   return allNetworks()
+}
+
+// ---------- 交易：买卖 / 查价 / 安全检测 / 限价单 ----------
+
+// 主流链的原生币直接对应到它的链，不走名字搜索（避免搜到同名山寨币）
+const NATIVE_HOME: Record<string, { mainnet: string; testnet: string }> = {
+  ETH: { mainnet: 'evm:1', testnet: 'evm:11155111' },
+  SOL: { mainnet: 'solana:mainnet', testnet: 'solana:devnet' },
+  TRX: { mainnet: 'tron:mainnet', testnet: 'tron:nile' },
+  BNB: { mainnet: 'evm:56', testnet: 'evm:97' },
+  POL: { mainnet: 'evm:137', testnet: 'evm:80002' },
+  MATIC: { mainnet: 'evm:137', testnet: 'evm:80002' },
+  AVAX: { mainnet: 'evm:43114', testnet: 'evm:43113' }
+}
+
+interface TradeToken {
+  n: Network
+  asset: Asset
+  hit: TokenHit | null
+}
+
+// lookup=true 用于查价 / 安全检测：不交易，测试网模式下也按主网查真实数据
+async function resolveTradeToken(networkQuery: string | null, query: string | null, lookup = false): Promise<TradeToken> {
+  if (!query) throw new Error('没有说是哪个币')
+  const current = getNetwork(settings().defaultNetwork)
+  const def = lookup && current.isTestnet && !networkQuery ? getNetwork('evm:1') : current
+  let n = networkQuery ? pickNetwork(networkQuery) : undefined
+  const sym = query.trim().toUpperCase()
+
+  // 原生币：没指定链时，默认网络的原生币就是它则用默认网络，否则去它的主链
+  if (!n && NATIVE_HOME[sym]) {
+    n = def.nativeSymbol.toUpperCase() === sym ? def : getNetwork(NATIVE_HOME[sym][def.isTestnet ? 'testnet' : 'mainnet'])
+  }
+  const base = n ?? def
+  // 内置代币 / 原生币 / 合约地址
+  try {
+    const asset = await resolveAsset(base, query)
+    return { n: base, asset, hit: asset.kind === 'token' && !asset.listed ? await tokenInfo(base, asset.address) : null }
+  } catch (e) {
+    if (n && familyOfAddress(query) === n.family) throw e
+  }
+  // 只给了 EVM 合约地址、没说链：按流动性找它在哪条链
+  if (!n && evm.isAddress(query)) {
+    const hits = await findToken(query).catch(() => [])
+    if (!hits.length) throw new Error('在支持的链上没找到这个合约的交易对，请说明是哪条链')
+    const asset = await resolveAsset(hits[0].network, query)
+    return { n: hits[0].network, asset, hit: hits[0] }
+  }
+  if (base.isTestnet) throw new Error(`测试网只能交易内置代币（${[base.nativeSymbol, ...(TOKENS[base.id] ?? []).map((t) => t.symbol)].join('、')}），或者直接给合约地址`)
+
+  // 按名字搜：同名山寨币很多，第一名流动性要明显领先才自动选
+  const hits = await searchTokens(query, n?.id)
+  if (!hits.length) throw new Error(`没有找到叫「${query}」的代币${n ? `（${n.name}）` : ''}，可以直接给合约地址`)
+  if (hits.length > 1 && hits[0].liquidityUsd < hits[1].liquidityUsd * 5) {
+    const list = hits.slice(0, 4).map((h, i) => `${i + 1}. ${h.symbol}（${h.network.name}）流动性 $${Math.round(h.liquidityUsd).toLocaleString()}，合约 ${h.address}`)
+    throw new Error(`「${query}」有多个同名代币，请${n ? '' : '说明是哪条链，或'}直接给合约地址：\n${list.join('\n')}`)
+  }
+  const top = hits[0]
+  const adapter = ADAPTERS[top.network.family]
+  const meta = await adapter.tokenMeta(top.network, top.address)
+  return { n: top.network, asset: { kind: 'token', symbol: top.symbol, decimals: meta.decimals, address: adapter.normalizeAddress(top.address), listed: false }, hit: top }
+}
+
+function sameAsset(a: Asset, b: Asset): boolean {
+  if (a.kind === 'native' || b.kind === 'native') return a.kind === b.kind
+  return a.address.toLowerCase() === b.address.toLowerCase()
+}
+
+// 付款币：优先余额最多的稳定币，没有就用原生币
+async function pickPayAsset(n: Network, exclude: Asset): Promise<Asset> {
+  const owner = myAddress(n.family)
+  const stables = (TOKENS[n.id] ?? []).filter((t) => STABLES.includes(t.symbol)).map((t) => ({ kind: 'token' as const, ...t, listed: true }))
+  const bals = await Promise.all(stables.map(async (a) => ({ a, bal: await ADAPTERS[n.family].balance(n, owner, a).catch(() => 0n) })))
+  const best = bals.filter((x) => x.bal > 0n && !sameAsset(x.a, exclude)).sort((x, y) => Number(y.bal / 10n ** BigInt(y.a.decimals)) - Number(x.bal / 10n ** BigInt(x.a.decimals)))[0]
+  return best?.a ?? nativeAsset(n)
+}
+
+// 收款币：默认 USDC，没有就 USDT，再没有就原生币
+async function pickReceiveAsset(n: Network, exclude: Asset): Promise<Asset> {
+  for (const sym of ['USDC', 'USDT']) {
+    const t = listedToken(n.id, sym)
+    if (t && !sameAsset({ kind: 'token', ...t, listed: true }, exclude)) return resolveAsset(n, sym)
+  }
+  if (exclude.kind === 'native') throw new Error(`${n.name} 上没有内置稳定币，请说明要换成什么`)
+  return nativeAsset(n)
+}
+
+// 1 个 asset 值多少美元；测试网用 Uniswap 测试池对 USDC 的价格（非真实行情）
+async function usdPrice(n: Network, a: Asset): Promise<number | null> {
+  if (a.kind === 'token' && STABLES.includes(a.symbol)) return 1
+  if (!n.isTestnet) return priceUsd(n, a)
+  const usdc = listedToken(n.id, 'USDC')
+  if (!usdc) return null
+  const q = await quoteUniswap(n, a, { kind: 'token', ...usdc, listed: true }, 10n ** BigInt(a.decimals)).catch(() => null)
+  return q ? Number(formatUnits(q.out, usdc.decimals)) : null
+}
+
+const usdToUnits = (usd: number, price: number, decimals: number) => parseUnits((usd / price).toFixed(Math.min(decimals, 12)), decimals)
+
+async function balanceFor(n: Network, a: Asset, reserveSwaps = 1): Promise<bigint> {
+  const bal = await ADAPTERS[n.family].balance(n, myAddress(n.family), a)
+  if (a.kind !== 'native') return bal
+  const reserve = (await routeGasReserve(n)) * BigInt(reserveSwaps)
+  return bal > reserve ? bal - reserve : 0n
+}
+
+const pctOf = (bal: bigint, p: string) => (bal * BigInt(Math.round(Number(p) * 100))) / 10_000n
+
+// 买 / 卖的安全检测：非白名单代币查 GoPlus + 流动性，有危险项就拦截
+async function tradeSafety(t: TradeToken): Promise<RiskCheck[]> {
+  if (t.asset.kind === 'native' || t.asset.listed) return []
+  const report = await security(t.n, t.asset.address, t.hit ?? (await tokenInfo(t.n, t.asset.address)))
+  return report.checks.filter((c) => c.level !== 'ok')
+}
+
+function attachChecks(card: RouteCard, checks: RiskCheck[], extra: RiskCheck[] = []): RouteCard {
+  card.checks.push(...checks, ...extra)
+  if (card.status === 'ready' && card.checks.some((c) => c.level === 'danger')) {
+    cancelRoute(card.id)
+    card.status = 'blocked'
+  }
+  return card
+}
+
+async function doBuy(intent: Intent): Promise<Card> {
+  if (!intent.amount) throw new Error('没有说买多少')
+  const target = await resolveTradeToken(intent.network, intent.asset)
+  const { n } = target
+  const pay = intent.to_asset ? await resolveAsset(n, intent.to_asset) : await pickPayAsset(n, target.asset)
+  if (sameAsset(pay, target.asset)) throw new Error(`不能用 ${pay.symbol} 买 ${target.asset.symbol}`)
+  const unit = intent.amount_unit ?? 'token'
+
+  // 限价买：付出的计价币数量
+  if (intent.price) {
+    const priceNum = Number(intent.price)
+    const amount =
+      unit === 'token' ? parseUnits((Number(intent.amount) * priceNum).toFixed(Math.min(pay.decimals, 12)), pay.decimals)
+      : unit === 'percent' ? pctOf(await balanceFor(n, pay), intent.amount)
+      : intent.amount === 'max' ? await balanceFor(n, pay)
+      : unit === 'usd' && !(pay.kind === 'token' && STABLES.includes(pay.symbol))
+        ? usdToUnits(Number(intent.amount), (await usdPrice(n, pay)) ?? 0, pay.decimals)
+        : parseUnits(intent.amount, pay.decimals)
+    return planLimit({ side: 'buy', network: n, token: target.asset, quote: pay, amount, price: intent.price })
+  }
+
+  let amount: bigint
+  if (intent.amount === 'max') amount = await balanceFor(n, pay)
+  else if (unit === 'pay') amount = parseUnits(intent.amount, pay.decimals)
+  else if (unit === 'percent') amount = pctOf(await balanceFor(n, pay), intent.amount)
+  else if (unit === 'usd') {
+    const p = await usdPrice(n, pay)
+    if (!p) throw new Error(`拿不到 ${pay.symbol} 的价格，换个说法试试，比如「用 0.1 ${pay.symbol} 买」`)
+    amount = usdToUnits(Number(intent.amount), p, pay.decimals)
+  } else {
+    // 按数量买：按价格算出要付多少，多留 1% 给滑点
+    const [pt, pp] = await Promise.all([usdPrice(n, target.asset), usdPrice(n, pay)])
+    const tp = pt ?? target.hit?.priceUsd ?? null
+    if (!tp || !pp) throw new Error(`拿不到价格，换个说法试试，比如「用 100 ${pay.symbol} 买 ${target.asset.symbol}」`)
+    amount = usdToUnits(Number(intent.amount) * tp * 1.01, pp, pay.decimals)
+  }
+  if (amount <= 0n) throw new Error(`${pay.symbol} 余额不足`)
+  const card = await planRoute({ mode: 'swap', from: n, to: n, fromAsset: pay, toAsset: target.asset, amount, dex: intent.dex })
+  return attachChecks(card, await tradeSafety(target))
+}
+
+async function doSell(intent: Intent): Promise<Card> {
+  if (!intent.amount) throw new Error('没有说卖多少')
+  const token = await resolveTradeToken(intent.network, intent.asset)
+  const { n } = token
+  const recv = intent.to_asset ? await resolveAsset(n, intent.to_asset) : await pickReceiveAsset(n, token.asset)
+  if (sameAsset(recv, token.asset)) throw new Error(`${token.asset.symbol} 不能卖成它自己`)
+  const unit = intent.amount_unit ?? 'token'
+  let amount: bigint
+  if (intent.amount === 'max') amount = await balanceFor(n, token.asset)
+  else if (unit === 'percent') amount = pctOf(await balanceFor(n, token.asset), intent.amount)
+  else if (unit === 'usd') {
+    const p = (await usdPrice(n, token.asset)) ?? token.hit?.priceUsd
+    if (!p) throw new Error(`拿不到 ${token.asset.symbol} 的价格，请直接说卖多少个`)
+    amount = usdToUnits(Number(intent.amount), p, token.asset.decimals)
+  } else amount = parseUnits(intent.amount, token.asset.decimals)
+  if (amount <= 0n) throw new Error(`${token.asset.symbol} 余额不足`)
+
+  if (intent.price) return planLimit({ side: 'sell', network: n, token: token.asset, quote: recv, amount, price: intent.price })
+  const card = await planRoute({ mode: 'swap', from: n, to: n, fromAsset: token.asset, toAsset: recv, amount, dex: intent.dex })
+  return attachChecks(card, await tradeSafety(token))
+}
+
+function money(v: number): string {
+  return v >= 1 ? v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : v.toPrecision(4)
+}
+
+async function doPrice(intent: Intent): Promise<Card> {
+  const t = await resolveTradeToken(intent.network, intent.asset, true)
+  const p = (await usdPrice(t.n, t.asset)) ?? t.hit?.priceUsd ?? null
+  if (!p) throw new Error(`暂时拿不到 ${t.asset.symbol} 的价格`)
+  const change = t.hit?.change24h !== undefined ? ` · 24h ${t.hit.change24h >= 0 ? '+' : ''}${t.hit.change24h.toFixed(2)}%` : ''
+  const note = t.n.isTestnet ? '（测试网 Uniswap 池子价格，不代表真实行情）' : ''
+  return info('info', `${t.asset.symbol}（${t.n.name}）≈ $${money(p)}${change}${note}`)
+}
+
+async function doTokenCheck(intent: Intent): Promise<Card> {
+  const t = await resolveTradeToken(intent.network, intent.asset, true)
+  const base = { kind: 'token_report' as const, symbol: t.asset.symbol, name: t.hit?.name ?? t.asset.symbol, network: summary(t.n) }
+  const p = (await usdPrice(t.n, t.asset).catch(() => null)) ?? t.hit?.priceUsd
+  const price = p ? `$${money(p)}` : undefined
+  const change24h = t.hit?.change24h !== undefined ? `${t.hit.change24h >= 0 ? '+' : ''}${t.hit.change24h.toFixed(2)}%` : undefined
+  if (t.asset.kind === 'native') {
+    return { ...base, price, facts: [], checks: [{ level: 'ok', text: `${t.n.name} 的原生币，没有合约风险` }] }
+  }
+  const hit = t.hit ?? (await tokenInfo(t.n, t.asset.address))
+  const report = await security(t.n, t.asset.address, hit)
+  if (t.asset.listed) report.checks.unshift({ level: 'ok', text: '在钱包内置白名单里（主流稳定币 / 包装币）' })
+  return { ...base, address: t.asset.address, price, change24h, facts: report.facts, checks: report.checks }
+}
+
+async function doOrders(): Promise<Card> {
+  const card = await listOrders()
+  return card.orders.length ? card : info('info', '没有限价单')
+}
+
+async function doCancelOrder(intent: Intent): Promise<Card> {
+  const n = await cancelMatching(intent.asset)
+  return info(n ? 'ok' : 'info', n ? `已撤销 ${n} 个限价单` : '没有找到要撤销的限价单')
 }

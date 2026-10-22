@@ -29,10 +29,36 @@ const NATIVE_TOKEN: Record<Network['family'], string> = {
   tron: 'TRX'
 }
 
+// Uniswap V3 SwapRouter02 / QuoterV2（已在链上核对 factory 与 WETH9）
+const UNI_DEFAULT = { router: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45', quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e' } as const
 const UNISWAP: Record<string, { router: Hex; quoter: Hex; weth: Hex }> = {
+  'evm:1': { ...UNI_DEFAULT, weth: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' },
+  'evm:42161': { ...UNI_DEFAULT, weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1' },
+  'evm:10': { ...UNI_DEFAULT, weth: '0x4200000000000000000000000000000000000006' },
+  'evm:137': { ...UNI_DEFAULT, weth: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270' },
+  'evm:8453': { router: '0x2626664c2603336E57B271c5C0b26F421741e481', quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a', weth: '0x4200000000000000000000000000000000000006' },
   'evm:11155111': { router: '0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E', quoter: '0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3', weth: '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14' },
   'evm:84532': { router: '0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4', quoter: '0xC5290058841028F1614F3A6F0F5816cAd0df5E27', weth: '0x4200000000000000000000000000000000000006' }
 }
+
+// 用户说的交易所 → LI.FI 的工具名（uniswap 是本钱包直连）
+const DEX_KEYS: Record<string, string> = {
+  uniswap: 'uniswap', uni: 'uniswap', '1inch': '1inch', okx: 'okx', kyber: 'kyberswap', kyberswap: 'kyberswap',
+  sushi: 'sushiswap', sushiswap: 'sushiswap', openocean: 'openocean', jupiter: 'jupiter', jup: 'jupiter',
+  dodo: 'dodo', bitget: 'bitget', dflow: 'dflow', titan: 'titan'
+}
+const VIA_AGGREGATOR = ['pancake', 'pancakeswap', '薄饼', 'raydium', 'orca', 'meteora', 'aerodrome', 'velodrome', 'curve', 'balancer']
+
+function dexKey(name?: string | null): string | undefined {
+  if (!name) return undefined
+  const k = name.toLowerCase().replace(/\s+|交易所|dex|聚合器/g, '')
+  if (DEX_KEYS[k]) return DEX_KEYS[k]
+  if (VIA_AGGREGATOR.some((v) => k.includes(v))) {
+    throw new Error(`${name} 暂不支持直连。不指定交易所时，聚合器会自动比价，并按需走 ${name} 的流动性池`)
+  }
+  throw new Error(`不认识的交易所「${name}」。可以指定：Uniswap、1inch、OKX、KyberSwap、SushiSwap、OpenOcean、DODO、Jupiter（Solana）`)
+}
+
 const ADDRESS_THIS: Hex = '0x0000000000000000000000000000000000000002' // SwapRouter02 约定：先留在路由合约里
 const FEE_TIERS = [500, 3000, 10000] as const
 
@@ -75,6 +101,7 @@ const plans = new Map<string, Plan>()
 const sent = new Map<string, Plan & { hash: string }>()
 
 export interface RouteRequest {
+  dex?: string | null
   mode: 'swap' | 'bridge'
   from: Network
   to: Network
@@ -192,9 +219,35 @@ async function sendEvm(n: Network, s: Signers, call: Call, approve?: Plan['appro
 
 // ---------- 测试网：Uniswap V3 / WETH 包装 ----------
 
+// Uniswap V3 三个费率档位都报价，取最多的；没有池子返回 null
+export async function quoteUniswap(n: Network, from: Asset, to: Asset, amount: bigint): Promise<{ fee: number; out: bigint } | null> {
+  const u = UNISWAP[n.id]
+  if (!u || n.family !== 'evm') return null
+  const tin = from.kind === 'native' ? u.weth : (from.address as Hex)
+  const tout = to.kind === 'native' ? u.weth : (to.address as Hex)
+  if (tin.toLowerCase() === tout.toLowerCase()) return null
+  const c = await publicClient(n)
+  const quotes = await Promise.all(
+    FEE_TIERS.map(async (fee) => {
+      try {
+        const { result } = await c.simulateContract({
+          address: u.quoter, abi: QUOTER_ABI, functionName: 'quoteExactInputSingle',
+          args: [{ tokenIn: tin, tokenOut: tout, amountIn: amount, fee, sqrtPriceLimitX96: 0n }]
+        })
+        return { fee, out: result[0] }
+      } catch {
+        return null // 该档位没有池子
+      }
+    })
+  )
+  let best: { fee: number; out: bigint } | null = null
+  for (const q of quotes) if (q && q.out > 0n && (!best || q.out > best.out)) best = q
+  return best
+}
+
 async function planUniswap(r: RouteRequest): Promise<Plan> {
   const u = UNISWAP[r.from.id]
-  if (!u) throw new Error(`测试网兑换目前支持 Sepolia 和 Base Sepolia，${r.from.name} 暂不支持`)
+  if (!u) throw new Error(`Uniswap 直连目前支持以太坊、Base、Arbitrum、OP、Polygon、Sepolia、Base Sepolia，${r.from.name} 暂不支持`)
   const owner = me('evm') as Hex
   const tin = r.fromAsset.kind === 'native' ? u.weth : (r.fromAsset.address as Hex)
   const tout = r.toAsset.kind === 'native' ? u.weth : (r.toAsset.address as Hex)
@@ -216,21 +269,10 @@ async function planUniswap(r: RouteRequest): Promise<Plan> {
     return { card, from: r.from, to: r.to, exec: (s) => sendEvm(r.from, s, call), track: async (h) => ({ state: await receipt(r.from, h) }), at: Date.now() }
   }
 
-  // 三个费率档位都报价，取最多的
-  let best: { fee: number; out: bigint } | null = null
-  for (const fee of FEE_TIERS) {
-    try {
-      const { result } = await c.simulateContract({
-        address: u.quoter, abi: QUOTER_ABI, functionName: 'quoteExactInputSingle',
-        args: [{ tokenIn: tin, tokenOut: tout, amountIn: r.amount, fee, sqrtPriceLimitX96: 0n }]
-      })
-      if (!best || result[0] > best.out) best = { fee, out: result[0] }
-    } catch {
-      // 该档位没有池子
-    }
-  }
-  if (!best || best.out === 0n) throw new Error(`${r.from.name} 上没有 ${r.fromAsset.symbol} → ${r.toAsset.symbol} 的 Uniswap 流动性`)
-  const min = (best.out * 99n) / 100n // 测试网 1% 滑点
+  const best = await quoteUniswap(r.from, r.fromAsset, r.toAsset, r.amount)
+  if (!best) throw new Error(`${r.from.name} 上没有 ${r.fromAsset.symbol} → ${r.toAsset.symbol} 的 Uniswap 流动性`)
+  const slip = r.from.isTestnet ? 100n : 50n // 测试网 1%，主网 0.5%
+  const min = (best.out * (10_000n - slip)) / 10_000n
   const swap = (recipient: Hex) =>
     encodeFunctionData({
       abi: ROUTER_ABI, functionName: 'exactInputSingle',
@@ -252,7 +294,7 @@ async function planUniswap(r: RouteRequest): Promise<Plan> {
   const card = baseCard(r, `Uniswap V3（${best.fee / 10000}% 池）`, best.out, min)
   card.rate = `1 ${r.fromAsset.symbol} ≈ ${fmt((best.out * 10n ** BigInt(r.fromAsset.decimals)) / r.amount, r.toAsset.decimals)} ${r.toAsset.symbol}`
   card.steps = [...(approve ? [`授权 Uniswap 路由合约动用 ${card.from.amount} ${r.fromAsset.symbol}（仅本次金额）`] : []), '兑换']
-  card.fees.push({ label: '池子费率', value: `${best.fee / 10000}%` }, { label: '滑点保护', value: '1%' })
+  card.fees.push({ label: '池子费率', value: `${best.fee / 10000}%` }, { label: '滑点保护', value: `${Number(slip) / 100}%` })
   const sim = await simulateEvm(r.from, owner, call, approve)
   card.simulation = { ok: sim.ok, detail: sim.detail }
   await commonChecks(r, card, sim.gas * (await feeParams(c)).perGas)
@@ -322,17 +364,45 @@ function lifiChain(n: Network): number {
   return id
 }
 
-async function lifiQuote(r: RouteRequest): Promise<LifiQuote> {
+interface LifiOpts {
+  allowExchanges?: string
+  order?: 'FASTEST' | 'CHEAPEST'
+}
+
+async function lifiQuote(r: RouteRequest, opts: LifiOpts = {}): Promise<LifiQuote> {
   const q = new URLSearchParams({
     fromChain: String(lifiChain(r.from)), toChain: String(lifiChain(r.to)),
     fromToken: tokenAddr(r.fromAsset, r.from), toToken: tokenAddr(r.toAsset, r.to),
     fromAmount: r.amount.toString(), fromAddress: me(r.from.family), toAddress: me(r.to.family),
-    slippage: '0.005', integrator: 'semantic-wallet'
+    slippage: '0.005', integrator: 'semantic-wallet',
+    ...(opts.allowExchanges ? { allowExchanges: opts.allowExchanges } : {}),
+    ...(opts.order ? { order: opts.order } : {})
   })
   const res = await fetch(`${LIFI_API}/quote?${q}`, { signal: AbortSignal.timeout(25_000) })
   const j = (await res.json()) as LifiQuote & { message?: string }
   if (!res.ok || j.message) throw new Error(`聚合器没有找到路线：${(j.message ?? res.statusText).slice(0, 160)}`)
   return j
+}
+
+// 同链兑换的多家报价（用于比价）
+async function lifiAlternatives(r: RouteRequest): Promise<{ key: string; name: string; out: bigint }[]> {
+  const res = await fetch(`${LIFI_API}/advanced/routes`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    signal: AbortSignal.timeout(25_000),
+    body: JSON.stringify({
+      fromChainId: lifiChain(r.from), toChainId: lifiChain(r.to),
+      fromTokenAddress: tokenAddr(r.fromAsset, r.from), toTokenAddress: tokenAddr(r.toAsset, r.to),
+      fromAmount: r.amount.toString(), fromAddress: me(r.from.family), toAddress: me(r.to.family),
+      options: { order: 'CHEAPEST', slippage: 0.005, integrator: 'semantic-wallet' }
+    })
+  })
+  const j = (await res.json()) as { routes?: { toAmount: string; steps: { tool: string; toolDetails?: { name: string } }[] }[] }
+  const seen = new Set<string>()
+  return (j.routes ?? [])
+    .filter((x) => x.steps.length === 1)
+    .map((x) => ({ key: x.steps[0].tool, name: x.steps[0].toolDetails?.name ?? x.steps[0].tool, out: BigInt(x.toAmount) }))
+    .filter((x) => !seen.has(x.key) && seen.add(x.key))
 }
 
 // 聚合器返回的交易逐项核对：链、收付款人、合约白名单、目标代币
@@ -364,9 +434,9 @@ function lifiCall(q: LifiQuote): Call {
   return { to: t.to as Hex, data: t.data as Hex, value: t.value ? BigInt(t.value) : 0n }
 }
 
-async function planLifi(r: RouteRequest): Promise<Plan> {
+async function planLifi(r: RouteRequest, opts: LifiOpts = {}): Promise<Plan> {
   if (r.from.family === 'tron') throw new Error('从 Tron 发起兑换 / 跨链暂不支持（可以跨链到 Tron 收款）')
-  let q = await lifiQuote(r)
+  let q = await lifiQuote(r, opts)
   const toAmount = BigInt(q.estimate.toAmount)
   const min = BigInt(q.estimate.toAmountMin)
   const tool = q.toolDetails?.name ?? q.tool
@@ -410,7 +480,7 @@ async function planLifi(r: RouteRequest): Promise<Plan> {
     card, from: r.from, to: r.to, approve,
     // 报价有时效（Solana 交易里的区块哈希一两分钟就过期），签名前重新报价，到账下限不能变差
     exec: async (s) => {
-      const fresh = await lifiQuote(r)
+      const fresh = await lifiQuote(r, opts)
       if (BigInt(fresh.estimate.toAmountMin) < (min * 99n) / 100n) throw new Error('报价变差了，请重新发起')
       const bad = verifyQuote(r, fresh).find((c) => c.level === 'danger')
       if (bad) throw new Error(bad.text)
@@ -444,9 +514,30 @@ export async function planRoute(r: RouteRequest): Promise<RouteCard> {
   if (r.from.isTestnet !== r.to.isTestnet) throw new Error('测试网和主网之间不能兑换或跨链')
   if (r.mode === 'swap' && r.from.id !== r.to.id) r = { ...r, mode: 'bridge' }
 
+  const dex = dexKey(r.dex)
   let plan: Plan
-  if (r.from.isTestnet) plan = r.mode === 'swap' ? await planUniswap(r) : await planTestnetBridge(r)
-  else plan = await planLifi(r)
+  if (r.from.isTestnet) {
+    if (dex && dex !== 'uniswap') throw new Error('测试网只有 Uniswap 可用')
+    plan = r.mode === 'swap' ? await planUniswap(r) : await planTestnetBridge(r)
+  } else if (r.mode === 'bridge') {
+    plan = await planLifi(r, { order: 'FASTEST' }) // 跨链优先速度
+  } else if (dex === 'uniswap') {
+    plan = await planUniswap(r)
+  } else if (dex) {
+    plan = await planLifi(r, { allowExchanges: dex })
+  } else {
+    // 不指定交易所：聚合器各家 + Uniswap 直连一起比价，选到手最多的
+    const [alts, uni] = await Promise.all([
+      lifiAlternatives(r).catch(() => []),
+      quoteUniswap(r.from, r.fromAsset, r.toAsset, r.amount).catch(() => null)
+    ])
+    const all = [...alts, ...(uni ? [{ key: 'uniswap', name: 'Uniswap V3 直连', out: uni.out }] : [])].sort((a, b) => (b.out > a.out ? 1 : -1))
+    const best = all[0]
+    plan = !best ? await planLifi(r) : best.key === 'uniswap' ? await planUniswap(r) : await planLifi(r, { allowExchanges: best.key })
+    if (all.length > 1) {
+      plan.card.alternatives = all.slice(0, 5).map((a) => ({ name: a.name, amount: fmt(a.out, r.toAsset.decimals), chosen: a === best }))
+    }
+  }
 
   const card = plan.card
   if (card.checks.some((c) => c.level === 'danger') || !card.simulation.ok) card.status = 'blocked'

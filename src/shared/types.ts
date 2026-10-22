@@ -145,6 +145,7 @@ export interface RouteCard {
   to: { network: NetworkSummary; asset: string; amount: string; min?: string; address: string }
   rate?: string
   duration?: string
+  alternatives?: { name: string; amount: string; chosen: boolean }[] // 比价结果
   fees: { label: string; value: string }[]
   steps: string[]
   simulation: { ok: boolean; detail: string }
@@ -157,7 +158,46 @@ export interface RouteCard {
   error?: string
 }
 
-export type Card = TransferCard | BalanceCard | NetworkCard | InfoCard | DappRequestCard | DappProposalCard | DappCommandCard | RouteCard
+// 限价单（CoW Protocol）
+export interface LimitOrderCard {
+  kind: 'limit'
+  id: string
+  status: 'ready' | 'blocked' | 'signing' | 'open' | 'filled' | 'cancelled' | 'expired' | 'failed'
+  side: 'buy' | 'sell'
+  network: NetworkSummary
+  sell: string
+  buy: string
+  price: string
+  market?: string
+  validUntil: string
+  steps: string[]
+  checks: RiskCheck[]
+  uid?: string
+  explorerUrl?: string
+  error?: string
+}
+
+export interface OrdersCard {
+  kind: 'orders'
+  orders: { uid: string; networkId: string; network: string; status: LimitOrderCard['status']; text: string; explorerUrl: string }[]
+}
+
+// 代币信息 / 安全检测
+export interface TokenReportCard {
+  kind: 'token_report'
+  symbol: string
+  name: string
+  network: NetworkSummary
+  address?: string
+  price?: string
+  change24h?: string
+  facts: { label: string; value: string }[]
+  checks: RiskCheck[]
+}
+
+export type Card =
+  | TransferCard | BalanceCard | NetworkCard | InfoCard | DappRequestCard | DappProposalCard | DappCommandCard
+  | RouteCard | LimitOrderCard | OrdersCard | TokenReportCard
 
 export interface ChatResponse {
   reply: string

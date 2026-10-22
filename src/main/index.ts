@@ -4,6 +4,7 @@ import type { ChainFamily, Contact, DappRequestInput, LlmConnectResult, LlmSetti
 import { allNetworks, getNetwork, loadRegistry, summary } from './chains/registry'
 import * as dapp from './dapp'
 import { cancelRoute, confirmRoute, routeStatus } from './routes'
+import { cancelLimitPlan, cancelOrder, confirmLimit, limitStatus } from './limit'
 import { cancel, chat, confirm, contacts, defaultBalances, removeContact, saveContact, txStatus } from './engine'
 import { describeLlmError, listModels, testLlm } from './intent/llm'
 import * as keystore from './keystore'
@@ -63,6 +64,10 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'route:confirm': (id: string) => confirmRoute(id),
   'route:cancel': (id: string) => cancelRoute(id),
   'route:status': (id: string) => routeStatus(id),
+  'limit:confirm': (id: string) => confirmLimit(id),
+  'limit:cancel': (id: string) => cancelLimitPlan(id),
+  'limit:status': (id: string) => limitStatus(id),
+  'orders:cancel': (networkId: string, uid: string) => cancelOrder(networkId, uid),
 
   'dapp:chains': (caips: string[]) => dapp.chainsInfo(caips),
   'dapp:analyze': (input: DappRequestInput) => dapp.analyze(input),

@@ -14,10 +14,13 @@ const EXAMPLES = [
   '波场测试网上我有多少 TRX 和 USDT',
   '在 Base Sepolia 上把 0.001 ETH 换成 USDC',
   '把 0.01 ETH 从 Sepolia 跨到 Base Sepolia',
+  '买 100U 的 ETH',
+  'ETH 跌到 2000 时用 50U 买入',
+  'PEPE 安全吗',
   '我的收款地址是什么'
 ]
 
-const COMPACT_EXAMPLES = ['查一下余额', '把 0.001 ETH 换成 USDC', '从 Sepolia 跨 0.01 ETH 到 Base Sepolia', '我的收款地址是什么']
+const COMPACT_EXAMPLES = ['查一下余额', 'ETH 现在多少钱', '用 10 USDC 买 ETH', 'ETH 涨到 5000 卖 0.01 个', 'PEPE 安全吗']
 
 export default function Chat({ compact = false, onSettled }: { compact?: boolean; onSettled?: () => void }) {
   const [msgs, setMsgs] = useState<Msg[]>([])

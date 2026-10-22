@@ -243,7 +243,25 @@ button.ghost:hover:not(:disabled) { color: var(--text); background: var(--panel-
 .leg b { font-size: 18px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .leg b span { font-size: 13px; color: var(--muted); }
 .legs .arrow { color: var(--muted); font-size: 18px; }
-.route dd { white-space: pre-line; }
+.route dd, .limit dd { white-space: pre-line; }
 .compact .legs { gap: 6px; }
 .compact .leg { padding: 8px 10px; }
 .compact .leg b { font-size: 15px; }
+
+/* ---------- 交易 ---------- */
+.alts { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.alts td { padding: 2px 0 !important; border: none !important; color: var(--muted); }
+.alts tr.chosen td { color: var(--ok); font-weight: 600; }
+.order { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.order:last-child { border-bottom: none; }
+.order.dim { opacity: .55; }
+.order-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.order-main a { color: var(--text); text-decoration: none; }
+.order button { padding: 4px 8px; }
+.amount-line { font-size: 22px; font-weight: 650; margin: 2px 0 8px; font-variant-numeric: tabular-nums; }
+.amount-line .up { color: var(--ok); font-size: 14px; }
+.amount-line .down { color: var(--danger); font-size: 14px; }
+.facts { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px; margin: 0 0 10px; font-size: 13px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+.compact .facts { grid-template-columns: 96px 1fr; font-size: 12.5px; }

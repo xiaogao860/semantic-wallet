@@ -5,6 +5,7 @@ import type {
   Contact,
   DappRequestCard,
   DappRequestInput,
+  LimitOrderCard,
   LlmConnectResult,
   LlmSettingsInput,
   NetworkRpcState,
@@ -39,6 +40,10 @@ export const api = {
   routeConfirm: (id: string) => c<RouteCard>('route:confirm', id),
   routeCancel: (id: string) => c<void>('route:cancel', id),
   routeStatus: (id: string) => c<RouteCard | undefined>('route:status', id),
+  limitConfirm: (id: string) => c<LimitOrderCard>('limit:confirm', id),
+  limitCancel: (id: string) => c<void>('limit:cancel', id),
+  limitStatus: (id: string) => c<LimitOrderCard | undefined>('limit:status', id),
+  cancelOrder: (networkId: string, uid: string) => c<void>('orders:cancel', networkId, uid),
 
   settings: () => c<AppSettingsView>('settings:get'),
   setMode: (mode: UiMode) => c<AppSettingsView>('window:setMode', mode),

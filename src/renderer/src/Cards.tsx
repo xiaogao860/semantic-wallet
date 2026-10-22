@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { BalanceCard, Card, NetworkCard, RouteCard, TransferCard } from '../../shared/types'
 import { api } from './api'
 import { ProposalCard, RequestCard } from './DappCards'
+import { LimitCard, OrdersList, TokenReport } from './TradeCards'
 
 const LEVEL_ICON = { ok: '✓', info: 'i', warn: '!', danger: '✕' }
 
@@ -169,6 +170,23 @@ function Route({ card: initial, onSettled }: { card: RouteCard; onSettled?: () =
             <dd>{card.rate}</dd>
           </>
         )}
+        {card.alternatives && (
+          <>
+            <dt>比价</dt>
+            <dd>
+              <table className="alts">
+                <tbody>
+                  {card.alternatives.map((a) => (
+                    <tr key={a.name} className={a.chosen ? 'chosen' : ''}>
+                      <td>{a.chosen ? '✓ ' : ''}{a.name}</td>
+                      <td className="num">{a.amount} {card.to.asset}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </dd>
+          </>
+        )}
         {card.to.min && (
           <>
             <dt>最少到账</dt>
@@ -295,6 +313,12 @@ export default function CardView({ card, onSettled }: { card: Card; onSettled?: 
       return <Network card={card} />
     case 'route':
       return <Route card={card} onSettled={onSettled} />
+    case 'limit':
+      return <LimitCard card={card} onSettled={onSettled} />
+    case 'orders':
+      return <OrdersList card={card} />
+    case 'token_report':
+      return <TokenReport card={card} />
     case 'dapp_proposal':
       return <ProposalCard card={card} />
     case 'dapp_request':
