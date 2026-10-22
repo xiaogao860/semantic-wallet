@@ -172,30 +172,57 @@ export interface NetworkMatch {
   candidates: Network[]
 }
 
-// 用户说法 → 网络。精确别名 > chainId > 前缀 > 包含；同分按 TVL；没提测试网时优先主网。
+// 用户说法 → 网络。去掉空格后比对；"测试链/测试网络/testnet"统一成"测试网"，结尾的"链/网络/chain"去掉；
+// 别名包含说法、说法包含别名都算命中。说了"测试"就绝不自动选主网，拿不准时把候选交给用户挑。
+function key(s: string): string {
+  return norm(s).replace(/ /g, '')
+}
+
+function variants(query: string): { all: string[]; core: string } {
+  const k = key(query)
+  const unified = k.replace(/测试链|测试网络|testnet/g, '测试网').replace(/主链|主网络|mainnet/g, '主网')
+  const noGeneric = unified.replace(/(网络|链|chain|network)$/, '')
+  const core = noGeneric.replace(/测试网|主网/g, '')
+  // "arbitrum测试网" 也按英文写法 "arbitrum testnet / arbitrum sepolia" 去比
+  const english = /测试网/.test(unified) && core ? [`${core}testnet`, `${core}sepolia`] : []
+  return { all: [...new Set([k, unified, noGeneric, core, ...english].filter((v) => v.length >= 2))], core }
+}
+
+const hasCjk = (s: string) => /[\u4e00-\u9fff]/.test(s)
+
 export function resolveNetwork(query: string, family?: ChainFamily): NetworkMatch {
-  const q = norm(query)
-  const wantsTestnet = /test|测试|sepolia|devnet|nile|shasta|amoy|fuji|holesky/.test(q)
   const pool = networks.filter((n) => !family || n.family === family)
   const idHit = pool.find((n) => n.id === query)
   if (idHit) return { best: idHit, candidates: [idHit] }
 
+  const { all, core } = variants(query)
+  const wantsTestnet = /test|测试|sepolia|devnet|nile|shasta|amoy|fuji|holesky/.test(key(query))
   const scored: { n: Network; s: number }[] = []
   for (const n of pool) {
+    const aliases = n.aliases.map((a) => a.replace(/ /g, ''))
     let s = 0
-    if (n.aliases.includes(q)) s = 100
-    else if (n.chainId !== undefined && String(n.chainId) === q) s = 95
-    else if (n.aliases.some((a) => a.startsWith(q) && q.length >= 3)) s = 60
-    else if (n.aliases.some((a) => a.includes(q) && q.length >= 3)) s = 40
+    for (const v of all) {
+      if (aliases.includes(v)) s = Math.max(s, v === core && v !== all[0] ? 90 : 100)
+      else if (n.chainId !== undefined && String(n.chainId) === v) s = Math.max(s, 95)
+      else {
+        if (v.length >= 3 && aliases.some((a) => a.startsWith(v))) s = Math.max(s, 60)
+        if (v.length >= 3 && aliases.some((a) => a.includes(v))) s = Math.max(s, 40)
+        // 说法里包含别名（如"以太坊sepolia测试网"包含"sepolia"），别名越长越可信
+        const inside = aliases.filter((a) => a.length >= (hasCjk(a) ? 2 : 3) && v.includes(a))
+        if (inside.length) s = Math.max(s, 50 + Math.min(Math.max(...inside.map((a) => a.length)) * 2, 30))
+      }
+    }
     if (!s) continue
-    if (n.isTestnet !== wantsTestnet) s -= 30
+    if (n.isTestnet !== wantsTestnet) s -= 60
+    // 人工整理过别名的主流网络优先（chainlist 里还有大量已废弃的同名旧测试网）
+    if (n.family !== 'evm' || EVM_ALIASES[n.chainId!]) s += 12
     scored.push({ n, s: s + Math.min(Math.log10(n.tvl + 1), 10) })
   }
   scored.sort((a, b) => b.s - a.s)
   const candidates = scored.slice(0, 5).map((x) => x.n)
   const top = scored[0]
-  // 第一名明显领先才自动选，否则让用户挑
-  const confident = top && (top.s >= 90 || !scored[1] || top.s - scored[1].s >= 15)
+  // 第一名明显领先、且测试网/主网属性对得上才自动选，否则让用户挑
+  const confident = top && top.n.isTestnet === wantsTestnet && (top.s >= 85 || !scored[1] || top.s - scored[1].s >= 15)
   return { best: confident ? top.n : undefined, candidates }
 }
 

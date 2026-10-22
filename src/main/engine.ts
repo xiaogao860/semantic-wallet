@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { formatUnits, parseUnits } from 'viem'
 import type { BalanceCard, Card, ChainFamily, ChatResponse, Contact, InfoCard, RiskCheck, TransferCard } from '../shared/types'
-import { evm, resolveEns, shortErr } from './adapters/evm'
+import { evm, feeParams, publicClient, resolveEns, shortErr } from './adapters/evm'
 import { solana } from './adapters/solana'
 import { tron } from './adapters/tron'
 import type { Asset, ChainAdapter, TransferParams } from './adapters/types'
@@ -242,6 +242,15 @@ async function doTransfer(intent: Intent): Promise<Card> {
   return card
 }
 
+async function routeGasReserve(n: Network): Promise<bigint> {
+  if (n.family === 'solana') return 10_000_000n // 0.01 SOL，覆盖交易费和可能的账户租金
+  if (n.family === 'evm') {
+    const { perGas } = await feeParams(await publicClient(n))
+    return 600_000n * perGas * 2n // 授权 + 兑换，再翻倍防止 gas 波动
+  }
+  return 2_000_000n
+}
+
 // 兑换 / 跨链：解析两端网络和资产后交给 routes
 async function doRoute(intent: Intent): Promise<Card> {
   if (!intent.amount) throw new Error('没有说数量')
@@ -255,11 +264,20 @@ async function doRoute(intent: Intent): Promise<Card> {
   const toQuery = intent.to_asset ?? (fromAsset.kind === 'native' ? to.nativeSymbol : fromAsset.symbol)
   const toAsset = await resolveAsset(to, toQuery)
   const owner = myAddress(from.family)
-  const amount =
-    intent.amount === 'max'
-      ? await ADAPTERS[from.family].maxAmount({ network: from, from: owner, to: owner, asset: fromAsset })
-      : parseUnits(intent.amount, fromAsset.decimals)
-  return planRoute({ mode, from, to, fromAsset, toAsset, amount })
+  let amount: bigint
+  let reserve = 0n
+  if (intent.amount === 'max') {
+    const bal = await ADAPTERS[from.family].balance(from, owner, fromAsset)
+    // 兑换 / 跨链比普通转账费 gas 得多（可能还要先授权），原生币全部转出时多留一些
+    if (fromAsset.kind === 'native') reserve = await routeGasReserve(from)
+    amount = bal > reserve ? bal - reserve : 0n
+    if (amount <= 0n) throw new Error(`${fromAsset.symbol} 余额不足以支付手续费，无法全部兑换`)
+  } else {
+    amount = parseUnits(intent.amount, fromAsset.decimals)
+  }
+  const card = await planRoute({ mode, from, to, fromAsset, toAsset, amount })
+  if (reserve > 0n) card.checks.push({ level: 'info', text: `全部兑换：已为手续费预留 ${fmt(reserve, from.nativeDecimals)} ${from.nativeSymbol}` })
+  return card
 }
 
 // 小窗顶部的余额：默认网络的原生币 + 白名单代币
