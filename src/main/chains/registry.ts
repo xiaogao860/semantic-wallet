@@ -231,6 +231,27 @@ export function norm(s: string): string {
 export interface NetworkMatch {
   best?: Network
   candidates: Network[]
+  corrected?: boolean // 是靠拼写容错匹配上的
+}
+
+// 编辑距离（含相邻字母对调），用于拼写容错
+export function editDistance(a: string, b: string): number {
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)])
+  for (let j = 0; j <= b.length; j++) d[0][j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1)
+    }
+  }
+  return d[a.length][b.length]
+}
+
+// 允许的错字数：越长的词越宽容；中文和太短的词不做容错
+export function typoBudget(word: string): number {
+  if (/[^a-z0-9]/.test(word)) return 0
+  return word.length >= 7 ? 2 : word.length >= 5 ? 1 : 0
 }
 
 // 用户说法 → 网络。去掉空格后比对；"测试链/测试网络/testnet"统一成"测试网"，结尾的"链/网络/chain"去掉；
@@ -256,6 +277,8 @@ let aliasKeys: Set<string> | null = null
 function cleanRemainder(rest: string): boolean {
   const r = rest.replace(/测试网络|测试网|测试链|主网络|主网|主链|网络|链|chain|network|testnet|mainnet|的|上/g, '')
   if (!r) return true
+  // 剩下的部分是别的网络名也算（如"以太坊sepolia"），但太短的英文名容易撞（"solace" = sol + ace）
+  if (!hasCjk(r) && r.length < 4) return false
   if (!aliasKeys) aliasKeys = new Set(networks.flatMap((n) => n.aliases.map((a) => a.replace(/ /g, ''))))
   return aliasKeys.has(r)
 }
@@ -281,7 +304,7 @@ export function resolveNetwork(query: string, family?: ChainFamily): NetworkMatc
         if (v.length >= 3 && aliases.some((a) => a.includes(v))) s = Math.max(s, 40)
         // 说法里包含别名（如"以太坊sepolia"包含"sepolia"），但去掉别名后剩下的只能是泛称或别的网络名，
         // 否则 "qorvexa" 会因为包含 "vex" 误配、"以太坊经典" 会误配到以太坊
-        const inside = aliases.filter((a) => a.length >= (hasCjk(a) ? 2 : 3) && v.includes(a) && cleanRemainder(v.replace(a, '')))
+        const inside = aliases.filter((a) => a.length >= (hasCjk(a) ? 2 : 4) && v.includes(a) && cleanRemainder(v.replace(a, '')))
         if (inside.length) s = Math.max(s, 50 + Math.min(Math.max(...inside.map((a) => a.length)) * 2, 30))
       }
     }
@@ -298,7 +321,32 @@ export function resolveNetwork(query: string, family?: ChainFamily): NetworkMatc
   // 第一名明显领先、且测试网/主网属性对得上才自动选，否则让用户挑
   const netOk = top && (top.n.isTestnet === wantsTestnet || (!explicitNet && top.exact))
   const confident = top && netOk && (top.s >= 85 || !scored[1] || top.s - scored[1].s >= 15)
-  return { best: confident ? top.n : undefined, candidates }
+  if (confident || candidates.length) return { best: confident ? top.n : undefined, candidates }
+  return fuzzyNetwork(core, wantsTestnet, explicitNet, pool)
+}
+
+// 拼写容错：只在主流网络（人工整理过别名的）里找，最接近的要唯一，才自动选
+function fuzzyNetwork(core: string, wantsTestnet: boolean, explicitNet: boolean, pool: Network[]): NetworkMatch {
+  const budget = typoBudget(core)
+  if (!budget) return { candidates: [] }
+  const hits: { n: Network; d: number }[] = []
+  for (const n of pool) {
+    if (n.family === 'evm' && !EVM_ALIASES[n.chainId!]) continue
+    if (explicitNet && n.isTestnet !== wantsTestnet) continue
+    // 别名里的 testnet / devnet / sepolia 等先去掉，拿"核心名"比（solnala测试网 → solana devnet）
+    const names = n.aliases
+      .flatMap((a) => [a.replace(/ /g, ''), a.replace(/ /g, '').replace(/testnet|devnet|sepolia|mainnet/g, '')])
+      .filter((a) => !/[^a-z0-9]/.test(a) && a.length >= 4)
+    if (!names.length) continue
+    const d = Math.min(...names.map((a) => editDistance(core, a)))
+    if (d <= budget) hits.push({ n, d })
+  }
+  // 没说测试网时，同等距离优先主网
+  hits.sort((a, b) => a.d - b.d || Number(a.n.isTestnet) - Number(b.n.isTestnet))
+  if (!hits.length) return { candidates: [] }
+  const best = hits[0]
+  const tie = hits.filter((h) => h.d === best.d && h.n.isTestnet === best.n.isTestnet).length > 1
+  return { best: tie ? undefined : best.n, candidates: hits.slice(0, 5).map((h) => h.n), corrected: true }
 }
 
 export function explorerTx(n: Network, hash: string): string | undefined {

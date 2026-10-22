@@ -2,7 +2,7 @@
 // 这些都是第三方数据，只用于展示和风控提示；交易本身仍以链上模拟和报价校验为准。
 import type { RiskCheck } from '../shared/types'
 import type { Asset } from './adapters/types'
-import { type Network, getNetwork } from './chains/registry'
+import { type Network, editDistance, getNetwork, typoBudget } from './chains/registry'
 import { proxyStatus } from './proxy'
 import { progress } from './progress'
 
@@ -234,10 +234,23 @@ const MAJOR_ALIASES: Record<string, string> = {
   狗狗币: 'DOGE', 狗币: 'DOGE', 瑞波: 'XRP', 瑞波币: 'XRP', 莱特币: 'LTC', 艾达币: 'ADA'
 }
 
+const MAJOR_NAMES: Record<string, string> = {
+  bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL', binance: 'BNB', tron: 'TRX', polygon: 'POL', avalanche: 'AVAX',
+  dogecoin: 'DOGE', ripple: 'XRP', toncoin: 'TON', cardano: 'ADA', litecoin: 'LTC', chainlink: 'LINK'
+}
+
 export function majorOf(query: string): Major | undefined {
   const q = query.trim().toUpperCase()
-  const sym = MAJOR_ALIASES[q] ?? MAJOR_ALIASES[query.trim()] ?? q
-  return MAJORS.find((m) => m.symbol === sym)
+  const sym = MAJOR_ALIASES[q] ?? MAJOR_ALIASES[query.trim()] ?? MAJOR_NAMES[query.trim().toLowerCase()] ?? q
+  const exact = MAJORS.find((m) => m.symbol === sym)
+  if (exact) return exact
+  // 英文全名的拼写容错（如 bitcion、dogcoin），最接近的要唯一
+  const w = query.trim().toLowerCase()
+  const budget = typoBudget(w)
+  if (!budget) return undefined
+  const hits = Object.entries(MAJOR_NAMES).map(([name, s]) => ({ s, d: editDistance(w, name) })).filter((h) => h.d <= budget).sort((a, b) => a.d - b.d)
+  if (!hits.length || (hits[1] && hits[1].d === hits[0].d)) return undefined
+  return MAJORS.find((m) => m.symbol === hits[0].s)
 }
 
 const majorCache = new Map<string, { at: number; v: { price: number; change24h?: number } }>()

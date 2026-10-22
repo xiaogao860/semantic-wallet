@@ -108,11 +108,17 @@ function familyOfAddress(s: string): ChainFamily | undefined {
   return undefined
 }
 
+// 本轮对话里靠拼写容错猜出来的说法，回复时一并告诉用户
+let corrections: string[] = []
+
 function pickNetwork(query: string | null, recipientHint?: string | null): Network {
   if (query) {
     const m = resolveNetwork(query)
-    if (m.best) return m.best
-    if (m.candidates.length) throw new Error(`「${query}」可能是：${m.candidates.map((c) => c.name).join(' / ')}，请说得更具体一点`)
+    if (m.best) {
+      if (m.corrected) corrections.push(`「${query}」→ ${m.best.name}`)
+      return m.best
+    }
+    if (m.candidates.length) throw new Error(`「${query}」可能是：${m.candidates.map((c) => c.name).join(' / ')}，请说得更具体一点。如果是一条新链，请提供它的 RPC 地址`)
     throw new UnknownNetworkError(query)
   }
   const def = getNetwork(settings().defaultNetwork)
@@ -513,6 +519,7 @@ export async function chat(text: string): Promise<ChatResponse> {
   if (parsed.clarify) return { reply: parsed.clarify, cards: [] }
 
   const cards: Card[] = []
+  corrections = []
   for (const intent of parsed.intents) {
     try {
       cards.push(...(await executeWithDiscovery(intent)))
@@ -520,6 +527,7 @@ export async function chat(text: string): Promise<ChatResponse> {
       cards.push(info('danger', shortErr(e)))
     }
   }
+  if (corrections.length) cards.unshift(info('info', `按拼写纠正理解为：${[...new Set(corrections)].join('、')}。不对的话换个说法`))
   return { reply: parsed.reply, cards }
 }
 
