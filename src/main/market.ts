@@ -3,6 +3,7 @@
 import type { RiskCheck } from '../shared/types'
 import type { Asset } from './adapters/types'
 import { type Network, getNetwork } from './chains/registry'
+import { proxyStatus } from './proxy'
 
 const LIFI_API = 'https://li.quest/v1'
 const LIFI_CHAIN: Record<string, number> = { 'solana:mainnet': 1151111081099710, 'tron:mainnet': 728126428 }
@@ -196,4 +197,80 @@ export async function security(n: Network, address: string, hit?: TokenHit | nul
   }
   if (!checks.some((c) => c.level !== 'info')) checks.push({ level: 'ok', text: '未发现明显的合约风险' })
   return { checks, facts }
+}
+
+// ---------- 主流币行情：不依赖链上代币搜索 ----------
+
+interface Major {
+  symbol: string
+  name: string
+  coingecko: string
+  lifi?: { chain: number; token: string }
+}
+
+const MAJORS: Major[] = [
+  { symbol: 'BTC', name: '比特币', coingecko: 'bitcoin', lifi: { chain: 20000000000001, token: 'bitcoin' } },
+  { symbol: 'ETH', name: '以太坊', coingecko: 'ethereum', lifi: { chain: 1, token: NATIVE_TOKEN.evm } },
+  { symbol: 'SOL', name: 'Solana', coingecko: 'solana', lifi: { chain: 1151111081099710, token: NATIVE_TOKEN.solana } },
+  { symbol: 'BNB', name: 'BNB', coingecko: 'binancecoin', lifi: { chain: 56, token: NATIVE_TOKEN.evm } },
+  { symbol: 'TRX', name: '波场', coingecko: 'tron', lifi: { chain: 728126428, token: 'TRX' } },
+  { symbol: 'POL', name: 'Polygon', coingecko: 'polygon-ecosystem-token', lifi: { chain: 137, token: NATIVE_TOKEN.evm } },
+  { symbol: 'AVAX', name: 'Avalanche', coingecko: 'avalanche-2', lifi: { chain: 43114, token: NATIVE_TOKEN.evm } },
+  { symbol: 'DOGE', name: '狗狗币', coingecko: 'dogecoin' },
+  { symbol: 'XRP', name: '瑞波币', coingecko: 'ripple' },
+  { symbol: 'TON', name: 'Toncoin', coingecko: 'the-open-network' },
+  { symbol: 'ADA', name: '艾达币', coingecko: 'cardano' },
+  { symbol: 'LTC', name: '莱特币', coingecko: 'litecoin' },
+  { symbol: 'LINK', name: 'Chainlink', coingecko: 'chainlink' }
+]
+
+const MAJOR_ALIASES: Record<string, string> = {
+  比特币: 'BTC', 大饼: 'BTC', XBT: 'BTC', BITCOIN: 'BTC',
+  以太坊: 'ETH', 以太: 'ETH', 姨太: 'ETH', ETHEREUM: 'ETH',
+  索拉纳: 'SOL', 币安币: 'BNB', 波场: 'TRX', MATIC: 'POL', 马蹄: 'POL', 雪崩: 'AVAX',
+  狗狗币: 'DOGE', 狗币: 'DOGE', 瑞波: 'XRP', 瑞波币: 'XRP', 莱特币: 'LTC', 艾达币: 'ADA'
+}
+
+export function majorOf(query: string): Major | undefined {
+  const q = query.trim().toUpperCase()
+  const sym = MAJOR_ALIASES[q] ?? MAJOR_ALIASES[query.trim()] ?? q
+  return MAJORS.find((m) => m.symbol === sym)
+}
+
+const majorCache = new Map<string, { at: number; v: { price: number; change24h?: number } }>()
+
+// 依次尝试：CoinGecko（需代理）→ Gate.io（国内可直连）→ LI.FI；60 秒缓存，避免免费接口限流
+export async function majorPrice(m: Major): Promise<{ price: number; change24h?: number } | null> {
+  const hit = majorCache.get(m.symbol)
+  if (hit && Date.now() - hit.at < 60_000) return hit.v
+  const sources: (() => Promise<{ price: number; change24h?: number } | null>)[] = [
+    async () => {
+      const j = await getJson<Record<string, { usd?: number; usd_24h_change?: number }>>(
+        `https://api.coingecko.com/api/v3/simple/price?ids=${m.coingecko}&vs_currencies=usd&include_24hr_change=true`, 6_000
+      )
+      const r = j[m.coingecko]
+      return r?.usd ? { price: r.usd, change24h: r.usd_24h_change } : null
+    },
+    async () => {
+      const j = await getJson<{ last?: string; change_percentage?: string }[]>(`https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${m.symbol}_USDT`, 6_000)
+      const p = Number(j[0]?.last)
+      return p > 0 ? { price: p, change24h: j[0]?.change_percentage ? Number(j[0].change_percentage) : undefined } : null
+    },
+    async () => {
+      if (!m.lifi) return null
+      const j = await getJson<{ priceUSD?: string }>(`${LIFI_API}/token?chain=${m.lifi.chain}&token=${m.lifi.token}`)
+      const p = Number(j.priceUSD)
+      return p > 0 ? { price: p } : null
+    }
+  ]
+  // 没开代理时 CoinGecko 连不上，先试国内能直连的 Gate.io，省掉一次超时等待
+  const order = proxyStatus() ? sources : [sources[1], sources[0], sources[2]]
+  for (const src of order) {
+    const v = await src().catch(() => null)
+    if (v) {
+      majorCache.set(m.symbol, { at: Date.now(), v })
+      return v
+    }
+  }
+  return null
 }

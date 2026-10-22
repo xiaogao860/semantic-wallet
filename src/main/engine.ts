@@ -13,7 +13,7 @@ import { describeLlmError } from './intent/llm'
 import { addresses, signers } from './keystore'
 import { recipientChecks } from './risk'
 import { cancelMatching, listOrders, planLimit } from './limit'
-import { type TokenHit, findToken, priceUsd, searchTokens, security, tokenInfo } from './market'
+import { type TokenHit, findToken, majorOf, majorPrice, priceUsd, searchTokens, security, tokenInfo } from './market'
 import { cancelRoute, planRoute, quoteUniswap } from './routes'
 import { addCustomRpc, probe } from './rpc'
 import { llmConfig, setPrefs, settings } from './settings'
@@ -559,6 +559,9 @@ async function resolveTradeToken(networkQuery: string | null, query: string | nu
   if (!query) throw new Error('没有说是哪个币')
   const current = getNetwork(settings().defaultNetwork)
   const def = lookup && current.isTestnet && !networkQuery ? getNetwork('evm:1') : current
+  if (majorOf(query)?.symbol === 'BTC' && !lookup) {
+    throw new Error('钱包暂不支持比特币主链。可以交易 EVM 链上的包装比特币：以太坊 / Arbitrum 上的 WBTC、Base 上的 cbBTC，请带上合约地址或说明链，比如「在 Base 上买 cbBTC」')
+  }
   let n = networkQuery ? pickNetwork(networkQuery) : undefined
   const sym = query.trim().toUpperCase()
 
@@ -725,6 +728,14 @@ function money(v: number): string {
 }
 
 async function doPrice(intent: Intent): Promise<Card> {
+  // 主流币（含比特币这类不在支持链上的）直接查行情，不走链上代币搜索
+  const major = intent.asset ? majorOf(intent.asset) : undefined
+  if (major) {
+    const r = await majorPrice(major)
+    if (!r) throw new Error(`暂时拿不到 ${major.name}（${major.symbol}）的价格，检查一下网络或代理`)
+    const change = r.change24h !== undefined ? ` · 24h ${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(2)}%` : ''
+    return info('info', `${major.name}（${major.symbol}）≈ $${money(r.price)}${change}`)
+  }
   const t = await resolveTradeToken(intent.network, intent.asset, true)
   const p = (await usdPrice(t.n, t.asset)) ?? t.hit?.priceUsd ?? null
   if (!p) throw new Error(`暂时拿不到 ${t.asset.symbol} 的价格`)
