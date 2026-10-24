@@ -12,7 +12,7 @@
 - `SemanticWallet-Portable-x.y.z.exe`：免安装，双击即用
 - `SemanticWallet-x.y.z-arm64.dmg`：macOS（Apple 芯片）
 
-> 安装包没有代码签名：Windows 首次运行 SmartScreen 会提示「未知发布者」，点「更多信息 → 仍要运行」；macOS 首次打开请右键应用选「打开」，如提示已损坏，执行 `xattr -cr /Applications/SemanticWallet.app`。
+> 安装包没有代码签名：Windows 首次运行 SmartScreen 会提示「未知发布者」，点「更多信息 → 仍要运行」；macOS 版是临时（ad-hoc）签名，未经 Apple 公证：先把应用拖进「应用程序」，首次打开被拦时到「系统设置 → 隐私与安全性」底部点「仍要打开」；也可以直接执行 `xattr -cr /Applications/SemanticWallet.app` 去掉下载隔离标记后再打开。
 
 ## 从源码运行
 
