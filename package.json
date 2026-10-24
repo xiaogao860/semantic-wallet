@@ -1,6 +1,6 @@
 {
   "name": "semantic-wallet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "语义链上钱包：一句话转账、RPC 自动配置，支持 EVM / Solana / Tron",
   "main": "out/main/index.js",
