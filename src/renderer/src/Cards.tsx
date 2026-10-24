@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import type { BalanceCard, Card, DiscoveryCard, NetworkCard, RouteCard, TransferCard } from '../../shared/types'
+import type { BalanceCard, Card, DiscoveryCard, NetworkCard, RouteCard, TokenChoiceCard, TransferCard } from '../../shared/types'
 import { api } from './api'
 import { ProposalCard, RequestCard } from './DappCards'
-import { Busy } from './Motion'
+import { Busy, Spinner } from './Motion'
 import { LimitCard, OrdersList, TokenReport } from './TradeCards'
 
 const LEVEL_ICON = { ok: '✓', info: 'i', warn: '!', danger: '✕' }
@@ -358,6 +358,84 @@ function Discovery({ card: initial, onSettled }: { card: DiscoveryCard; onSettle
   )
 }
 
+function TokenChoice({ card, onSettled }: { card: TokenChoiceCard; onSettled?: () => void }) {
+  const [picked, setPicked] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [after, setAfter] = useState<Card[]>([])
+  const [copied, setCopied] = useState<string | null>(null)
+  const choose = async (key: string) => {
+    setBusy(key)
+    try {
+      setAfter(await api.tokenChoose(card.id, key))
+      setPicked(key)
+      onSettled?.()
+    } catch (e) {
+      setAfter([{ kind: 'info', level: 'danger', text: (e as Error).message }])
+    } finally {
+      setBusy(null)
+    }
+  }
+  const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
+  const options = picked ? card.options.filter((o) => o.key === picked) : card.options
+  return (
+    <>
+      <div className="card choice">
+        <div className="card-head">
+          <span className="tag">{card.title ?? `「${card.query}」有 ${card.options.length} 个同名代币`}</span>
+          <span className="status ready">{picked ? '已选择' : `选一个来${card.action}`}</span>
+        </div>
+        <div className="choices">
+          {options.map((o) => (
+            <div key={o.key} className={`choice-row ${o.recommended ? 'rec' : ''}`}>
+              <div className="choice-main">
+                <div className="choice-title">
+                  <b>{o.name}</b>
+                  <span className="muted small">{o.symbol}</span>
+                  {o.recommended && <span className="tag ok-tag">流动性最高</span>}
+                  {o.note && <span className="tag">{o.note}</span>}
+                </div>
+                <div className="choice-meta">
+                  <span className="chain">{o.network.name}</span>
+                  {o.price && <span>{o.price}</span>}
+                  {o.change24h !== undefined && (
+                    <span className={o.change24h >= 0 ? 'up' : 'down'}>
+                      {o.change24h >= 0 ? '+' : ''}
+                      {o.change24h.toFixed(1)}%
+                    </span>
+                  )}
+                  {o.liquidity && <span>流动性 {o.liquidity}</span>}
+                  {o.volume24h && <span>24h {o.volume24h}</span>}
+                  {o.age && <span>上线 {o.age}</span>}
+                </div>
+                <button
+                  className="addr-mini mono"
+                  title={o.address}
+                  onClick={() => {
+                    void navigator.clipboard.writeText(o.address)
+                    setCopied(o.key)
+                    setTimeout(() => setCopied(null), 1200)
+                  }}
+                >
+                  {copied === o.key ? '已复制合约' : short(o.address)}
+                </button>
+              </div>
+              {!picked && (
+                <button className={o.recommended ? 'primary pick' : 'pick'} disabled={!!busy} onClick={() => void choose(o.key)}>
+                  {busy === o.key ? <Spinner /> : '选这个'}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        {!picked && <p className="muted small">同名代币里有不少是仿冒币，优先选流动性高、上线时间长的，并核对合约地址</p>}
+      </div>
+      {after.map((c, i) => (
+        <CardView key={i} card={c} onSettled={onSettled} />
+      ))}
+    </>
+  )
+}
+
 function Balances({ card }: { card: BalanceCard }) {
   return (
     <div className="card">
@@ -414,6 +492,8 @@ export default function CardView({ card, onSettled }: { card: Card; onSettled?: 
       return <Route card={card} onSettled={onSettled} />
     case 'discovery':
       return <Discovery card={card} onSettled={onSettled} />
+    case 'token_choice':
+      return <TokenChoice card={card} onSettled={onSettled} />
     case 'limit':
       return <LimitCard card={card} onSettled={onSettled} />
     case 'orders':

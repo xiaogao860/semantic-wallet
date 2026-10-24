@@ -7,7 +7,7 @@ import { setProgressTarget } from './progress'
 import { cancelDiscovery, confirmDiscovery } from './discovery'
 import { cancelRoute, confirmRoute, routeStatus } from './routes'
 import { cancelLimitPlan, cancelOrder, confirmLimit, limitStatus } from './limit'
-import { cancel, chat, confirm, contacts, defaultBalances, removeContact, runFollowUp, saveContact, txStatus } from './engine'
+import { cancel, chat, chooseToken, confirm, contacts, defaultBalances, removeContact, runFollowUp, saveContact, txStatus } from './engine'
 import { describeLlmError, listModels, testLlm } from './intent/llm'
 import * as keystore from './keystore'
 import { cachedState, invalidateRpcState, loadRpcState, probe } from './rpc'
@@ -71,6 +71,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
     return { network: r.network, cards: await runFollowUp(r.followUp) }
   },
   'discovery:cancel': (id: string) => cancelDiscovery(id),
+  'token:choose': (id: string, key: string) => chooseToken(id, key),
   'limit:confirm': (id: string) => confirmLimit(id),
   'limit:cancel': (id: string) => cancelLimitPlan(id),
   'limit:status': (id: string) => limitStatus(id),

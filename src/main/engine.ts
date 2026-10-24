@@ -2,7 +2,7 @@
 // 确认卡片上的内容全部来自确定性代码，不来自 LLM 文本。
 import { randomUUID } from 'node:crypto'
 import { formatUnits, parseUnits } from 'viem'
-import type { BalanceCard, Card, ChainFamily, ChatResponse, Contact, InfoCard, RiskCheck, RouteCard, TransferCard } from '../shared/types'
+import type { BalanceCard, Card, ChainFamily, ChatResponse, Contact, InfoCard, RiskCheck, RouteCard, TokenChoiceOption, TransferCard } from '../shared/types'
 import { evm, explainError, feeParams, publicClient, resolveEns, shortErr } from './adapters/evm'
 import { solana } from './adapters/solana'
 import { tron } from './adapters/tron'
@@ -481,14 +481,36 @@ export async function execute(intent: Intent): Promise<Card[]> {
 }
 
 // 遇到不认识的网络：联网发现。注册表刷新后就认识了，直接重跑；否则给出"发现新网络"卡片，确认后再跑
+const ACTION_LABEL: Partial<Record<Intent['action'], string>> = { buy: '买入', sell: '卖出', price: '查价', token_check: '查安全', swap: '兑换' }
+const choices = new Map<string, { intent: Intent; options: TokenChoiceOption[]; at: number }>()
+
 async function executeWithDiscovery(intent: Intent): Promise<Card[]> {
   try {
     return await execute(intent)
   } catch (e) {
+    if (e instanceof TokenChoiceError) {
+      const id = randomUUID()
+      const options = e.options.map((o, i) => ({ ...o, key: String(i) }))
+      choices.set(id, { intent, options, at: Date.now() })
+      return [{ kind: 'token_choice', id, query: e.query, title: e.title, action: ACTION_LABEL[intent.action] ?? '继续', options }]
+    }
     if (!(e instanceof UnknownNetworkError)) throw e
     const r = await discoverChain(e.query, intent, intent.action === 'add_rpc' ? (intent.url ?? undefined) : undefined)
     if ('found' in r) return execute(intent)
     return [r.card]
+  }
+}
+
+// 用户在选择卡片上点了某一个：用它的链和合约重跑原来的指令
+export async function chooseToken(id: string, key: string): Promise<Card[]> {
+  const c = choices.get(id)
+  if (!c || Date.now() - c.at > 30 * 60 * 1000) throw new Error('这个选择已过期，请重新说一次')
+  const opt = c.options.find((o) => o.key === key)
+  if (!opt) throw new Error('没有这个选项')
+  try {
+    return await execute({ ...c.intent, network: opt.network.id, asset: opt.address })
+  } catch (e) {
+    return [info('danger', shortErr(e))]
   }
 }
 
@@ -601,6 +623,27 @@ const NATIVE_HOME: Record<string, { mainnet: string; testnet: string }> = {
   AVAX: { mainnet: 'evm:43114', testnet: 'evm:43113' }
 }
 
+// 同名代币需要用户挑：带上候选，由 executeWithDiscovery 变成选择卡片
+class TokenChoiceError extends Error {
+  constructor(public query: string, public options: Omit<TokenChoiceOption, 'key'>[], public title?: string) {
+    super(`「${query}」有多个同名代币，请选一个`)
+  }
+}
+
+const compactUsd = (v?: number) =>
+  v === undefined ? undefined : v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(1)}K` : `$${Math.round(v)}`
+
+function optionFromHit(h: TokenHit, recommended: boolean, defId: string): Omit<TokenChoiceOption, 'key'> {
+  const days = h.createdAt ? (Date.now() - h.createdAt) / 86_400_000 : undefined
+  return {
+    network: summary(h.network), name: h.name, symbol: h.symbol, address: h.address,
+    price: h.priceUsd !== undefined ? `$${money(h.priceUsd)}` : undefined, change24h: h.change24h,
+    liquidity: compactUsd(h.liquidityUsd), volume24h: compactUsd(h.volume24h),
+    age: days === undefined ? undefined : days < 1 ? `${Math.max(1, Math.round(days * 24))} 小时` : days < 60 ? `${Math.round(days)} 天` : `${(days / 365).toFixed(1)} 年`,
+    recommended, note: h.network.id === defId ? '当前网络' : undefined
+  }
+}
+
 interface TradeToken {
   n: Network
   asset: Asset
@@ -638,6 +681,14 @@ async function resolveTradeToken(networkQuery: string | null, query: string | nu
     if (!pool.length) {
       throw new Error(`${major!.name} 在 ${n!.name} 上没有内置的版本，可以在这些链上交易：${bridged.map((b) => getNetwork(b.networkId).name).join('、')}`)
     }
+    if (!n && pool.length > 1 && !pool.some((b) => b.networkId === def.id)) {
+      const infos = await Promise.all(pool.map((b) => tokenInfo(getNetwork(b.networkId), b.address).catch(() => null)))
+      throw new TokenChoiceError(major!.name, pool.map((b, i) => {
+        const h = infos[i]
+        const base = h ? optionFromHit(h, i === 0, def.id) : { network: summary(getNetwork(b.networkId)), recommended: i === 0 }
+        return { ...base, name: b.name, symbol: b.symbol, address: b.address, note: b.wrapped ? '跨链版本' : undefined }
+      }), `${major!.name}不在当前网络上，在 ${pool.length} 条链上有版本`)
+    }
     const pick = pool.find((b) => b.networkId === def.id) ?? pool[0]
     const net = getNetwork(pick.networkId)
     const others = pool.filter((b) => b !== pick).map((b) => `${getNetwork(b.networkId).name} 的 ${b.symbol}`)
@@ -659,14 +710,11 @@ async function resolveTradeToken(networkQuery: string | null, query: string | nu
   // 按名字搜：同名币很多时不报错，按流动性自动选（当前链上流动性够的优先），卡片上写清选了哪个、还有哪些
   const hits = await searchTokens(query, n?.id)
   if (!hits.length) throw new Error(`没有找到叫「${query}」的代币${n ? `（${n.name}）` : ''}，可以直接给合约地址`)
+  // 只有一个，或者第一名流动性领先 5 倍以上，直接用；否则把各条链上的同名币全部列出来让用户选
   const dominant = hits.length === 1 || hits[0].liquidityUsd >= hits[1].liquidityUsd * 5
-  let top = hits[0]
-  if (!dominant && !n) top = hits.find((h) => h.network.id === def.id && h.liquidityUsd >= hits[0].liquidityUsd * 0.2) ?? hits[0]
-  const usd = (v: number) => `$${Math.round(v).toLocaleString()}`
-  const notes: RiskCheck[] = dominant ? [] : [{
-    level: 'warn',
-    text: `「${query}」有 ${hits.length} 个同名代币，已按流动性选了 ${top.name}（${top.network.name}，流动性 ${usd(top.liquidityUsd)}），合约 ${top.address}。其他：${hits.filter((h) => h !== top).slice(0, 3).map((h) => `${h.name}（${h.network.name}，${usd(h.liquidityUsd)}）`).join('；')}。不是这个就直接给合约地址`
-  }]
+  if (!dominant) throw new TokenChoiceError(query, hits.slice(0, 10).map((h, i) => optionFromHit(h, i === 0, def.id)))
+  const top = hits[0]
+  const notes: RiskCheck[] = []
   const adapter = ADAPTERS[top.network.family]
   const meta = await adapter.tokenMeta(top.network, top.address)
   return { n: top.network, asset: { kind: 'token', symbol: top.symbol, decimals: meta.decimals, address: adapter.normalizeAddress(top.address), listed: false }, hit: top, notes }
@@ -815,32 +863,12 @@ async function doPrice(intent: Intent): Promise<Card> {
     const change = r.change24h !== undefined ? ` · 24h ${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(2)}%` : ''
     return info('info', `${major.name}（${major.symbol}）≈ $${money(r.price)}${change}`)
   }
-  let t: TradeToken
-  try {
-    t = await resolveTradeToken(intent.network, intent.asset, true)
-  } catch (e) {
-    const list = await priceCandidates(intent).catch(() => null)
-    if (list) return list
-    throw e
-  }
+  const t = await resolveTradeToken(intent.network, intent.asset, true)
   const p = (await usdPrice(t.n, t.asset)) ?? t.hit?.priceUsd ?? null
   if (!p) throw new Error(`暂时拿不到 ${t.asset.symbol} 的价格`)
   const change = t.hit?.change24h !== undefined ? ` · 24h ${t.hit.change24h >= 0 ? '+' : ''}${t.hit.change24h.toFixed(2)}%` : ''
   const note = t.n.isTestnet ? '（测试网 Uniswap 池子价格，不代表真实行情）' : ''
   return info('info', `${t.asset.symbol}（${t.n.name}）≈ $${money(p)}${change}${note}`)
-}
-
-// 查价时遇到多个同名币：把前几个的价格、链、流动性都列出来
-async function priceCandidates(intent: Intent): Promise<Card | null> {
-  if (!intent.asset) return null
-  const n = intent.network ? pickNetwork(intent.network) : undefined
-  const hits = (await searchTokens(intent.asset, n?.id)).filter((h) => h.priceUsd)
-  if (hits.length < 2) return null
-  const lines = hits.slice(0, 5).map((h, i) => {
-    const ch = h.change24h !== undefined ? ` · 24h ${h.change24h >= 0 ? '+' : ''}${h.change24h.toFixed(1)}%` : ''
-    return `${i + 1}. ${h.name}（${h.network.name}）$${money(h.priceUsd!)}${ch} · 流动性 $${Math.round(h.liquidityUsd).toLocaleString()}\n   ${h.address}`
-  })
-  return info('info', `「${intent.asset}」有 ${hits.length} 个同名代币，按流动性排列：\n${lines.join('\n')}\n\n要交易或查安全，请带上链名或合约地址。`)
 }
 
 async function doTokenCheck(intent: Intent): Promise<Card> {

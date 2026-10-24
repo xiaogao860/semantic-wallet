@@ -212,7 +212,33 @@ export interface DiscoveryCard {
   error?: string
 }
 
+// 多条链上有同名代币时，全部列出来让用户选
+export interface TokenChoiceOption {
+  key: string
+  network: NetworkSummary
+  name: string
+  symbol: string
+  address: string
+  price?: string
+  change24h?: number
+  liquidity?: string
+  volume24h?: string
+  age?: string
+  recommended: boolean
+  note?: string
+}
+
+export interface TokenChoiceCard {
+  kind: 'token_choice'
+  id: string
+  query: string
+  title?: string
+  action: string
+  options: TokenChoiceOption[]
+}
+
 export type Card =
+  | TokenChoiceCard
   | DiscoveryCard
   | TransferCard | BalanceCard | NetworkCard | InfoCard | DappRequestCard | DappProposalCard | DappCommandCard
   | RouteCard | LimitOrderCard | OrdersCard | TokenReportCard

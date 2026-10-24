@@ -45,6 +45,7 @@ export const api = {
   routeStatus: (id: string) => c<RouteCard | undefined>('route:status', id),
   discoveryConfirm: (id: string) => c<{ network: NetworkSummary; cards: Card[] }>('discovery:confirm', id),
   discoveryCancel: (id: string) => c<void>('discovery:cancel', id),
+  tokenChoose: (id: string, key: string) => c<Card[]>('token:choose', id, key),
   limitConfirm: (id: string) => c<LimitOrderCard>('limit:confirm', id),
   limitCancel: (id: string) => c<void>('limit:cancel', id),
   limitStatus: (id: string) => c<LimitOrderCard | undefined>('limit:status', id),
